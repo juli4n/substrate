@@ -73,7 +73,8 @@ shell scripts here; for more complex automation, put a Go tool in `tools/`.
 
 Dev/CI tools written in Go. These are build-time or
 operations tools that are part of the repository but not compiled into any
-shipped binary. Example: `tools/setup-gcp` provisions GCP resources.
+shipped binary. Run them with `cd tools/<name> && go run .`.
+Example: `tools/setup-gcp` provisions GCP resources.
 
 Each tool must have its own dedicated `go.mod` (and `go.sum`).
 
