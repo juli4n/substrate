@@ -33,24 +33,34 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	AteomHerder_Run_FullMethodName        = "/atelet.AteomHerder/Run"
-	AteomHerder_Checkpoint_FullMethodName = "/atelet.AteomHerder/Checkpoint"
-	AteomHerder_Restore_FullMethodName    = "/atelet.AteomHerder/Restore"
+	AteomHerder_Run_FullMethodName           = "/atelet.AteomHerder/Run"
+	AteomHerder_Checkpoint_FullMethodName    = "/atelet.AteomHerder/Checkpoint"
+	AteomHerder_Restore_FullMethodName       = "/atelet.AteomHerder/Restore"
+	AteomHerder_WatchCapacity_FullMethodName = "/atelet.AteomHerder/WatchCapacity"
 )
 
 // AteomHerderClient is the client API for AteomHerder service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type AteomHerderClient interface {
-	// Run tells atelet to create a new containerized workload from scratch on an
-	// ateom.
+	// Run tells atelet to create a new containerized workload from scratch on a
+	// free ateom. Atelet picks the ateom from its local pool. Idempotent: if the
+	// actor is already running on this node, returns OK with the existing pod.
+	// Returns RESOURCE_EXHAUSTED if no free ateoms are available.
 	Run(ctx context.Context, in *RunRequest, opts ...grpc.CallOption) (*RunResponse, error)
 	// Checkpoint tells atelet to save the current state of the workload on an
-	// ateom to object storage, and then completely the ateom to a blank state
+	// ateom to object storage, and then reset the ateom to a blank state
 	// (back to "available" state.)
 	Checkpoint(ctx context.Context, in *CheckpointRequest, opts ...grpc.CallOption) (*CheckpointResponse, error)
-	// Restore restores a workload from checkpoint onto an ateom.
+	// Restore restores a workload from checkpoint onto a free ateom. Atelet
+	// picks the ateom from its local pool. Idempotent: if the actor is already
+	// running on this node, returns OK with the existing pod.
+	// Returns RESOURCE_EXHAUSTED if no free ateoms are available.
 	Restore(ctx context.Context, in *RestoreRequest, opts ...grpc.CallOption) (*RestoreResponse, error)
+	// WatchCapacity streams capacity snapshots for all worker pools managed by
+	// this atelet. On connect and after every capacity change, atelet sends a
+	// complete CapacitySnapshot covering all pools on this node.
+	WatchCapacity(ctx context.Context, in *WatchCapacityRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[CapacitySnapshot], error)
 }
 
 type ateomHerderClient struct {
@@ -91,19 +101,47 @@ func (c *ateomHerderClient) Restore(ctx context.Context, in *RestoreRequest, opt
 	return out, nil
 }
 
+func (c *ateomHerderClient) WatchCapacity(ctx context.Context, in *WatchCapacityRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[CapacitySnapshot], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &AteomHerder_ServiceDesc.Streams[0], AteomHerder_WatchCapacity_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[WatchCapacityRequest, CapacitySnapshot]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type AteomHerder_WatchCapacityClient = grpc.ServerStreamingClient[CapacitySnapshot]
+
 // AteomHerderServer is the server API for AteomHerder service.
 // All implementations must embed UnimplementedAteomHerderServer
 // for forward compatibility.
 type AteomHerderServer interface {
-	// Run tells atelet to create a new containerized workload from scratch on an
-	// ateom.
+	// Run tells atelet to create a new containerized workload from scratch on a
+	// free ateom. Atelet picks the ateom from its local pool. Idempotent: if the
+	// actor is already running on this node, returns OK with the existing pod.
+	// Returns RESOURCE_EXHAUSTED if no free ateoms are available.
 	Run(context.Context, *RunRequest) (*RunResponse, error)
 	// Checkpoint tells atelet to save the current state of the workload on an
-	// ateom to object storage, and then completely the ateom to a blank state
+	// ateom to object storage, and then reset the ateom to a blank state
 	// (back to "available" state.)
 	Checkpoint(context.Context, *CheckpointRequest) (*CheckpointResponse, error)
-	// Restore restores a workload from checkpoint onto an ateom.
+	// Restore restores a workload from checkpoint onto a free ateom. Atelet
+	// picks the ateom from its local pool. Idempotent: if the actor is already
+	// running on this node, returns OK with the existing pod.
+	// Returns RESOURCE_EXHAUSTED if no free ateoms are available.
 	Restore(context.Context, *RestoreRequest) (*RestoreResponse, error)
+	// WatchCapacity streams capacity snapshots for all worker pools managed by
+	// this atelet. On connect and after every capacity change, atelet sends a
+	// complete CapacitySnapshot covering all pools on this node.
+	WatchCapacity(*WatchCapacityRequest, grpc.ServerStreamingServer[CapacitySnapshot]) error
 	mustEmbedUnimplementedAteomHerderServer()
 }
 
@@ -122,6 +160,9 @@ func (UnimplementedAteomHerderServer) Checkpoint(context.Context, *CheckpointReq
 }
 func (UnimplementedAteomHerderServer) Restore(context.Context, *RestoreRequest) (*RestoreResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Restore not implemented")
+}
+func (UnimplementedAteomHerderServer) WatchCapacity(*WatchCapacityRequest, grpc.ServerStreamingServer[CapacitySnapshot]) error {
+	return status.Error(codes.Unimplemented, "method WatchCapacity not implemented")
 }
 func (UnimplementedAteomHerderServer) mustEmbedUnimplementedAteomHerderServer() {}
 func (UnimplementedAteomHerderServer) testEmbeddedByValue()                     {}
@@ -198,6 +239,17 @@ func _AteomHerder_Restore_Handler(srv interface{}, ctx context.Context, dec func
 	return interceptor(ctx, in, info, handler)
 }
 
+func _AteomHerder_WatchCapacity_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(WatchCapacityRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(AteomHerderServer).WatchCapacity(m, &grpc.GenericServerStream[WatchCapacityRequest, CapacitySnapshot]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type AteomHerder_WatchCapacityServer = grpc.ServerStreamingServer[CapacitySnapshot]
+
 // AteomHerder_ServiceDesc is the grpc.ServiceDesc for AteomHerder service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -218,6 +270,12 @@ var AteomHerder_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _AteomHerder_Restore_Handler,
 		},
 	},
-	Streams:  []grpc.StreamDesc{},
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "WatchCapacity",
+			Handler:       _AteomHerder_WatchCapacity_Handler,
+			ServerStreams: true,
+		},
+	},
 	Metadata: "atelet.proto",
 }

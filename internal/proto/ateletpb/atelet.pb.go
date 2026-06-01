@@ -37,15 +37,16 @@ const (
 
 type RunRequest struct {
 	state                  protoimpl.MessageState `protogen:"open.v1"`
-	TargetAteomNamespace   string                 `protobuf:"bytes,1,opt,name=target_ateom_namespace,json=targetAteomNamespace,proto3" json:"target_ateom_namespace,omitempty"`
-	TargetAteomName        string                 `protobuf:"bytes,2,opt,name=target_ateom_name,json=targetAteomName,proto3" json:"target_ateom_name,omitempty"`
 	ActorTemplateNamespace string                 `protobuf:"bytes,3,opt,name=actor_template_namespace,json=actorTemplateNamespace,proto3" json:"actor_template_namespace,omitempty"`
 	ActorTemplateName      string                 `protobuf:"bytes,4,opt,name=actor_template_name,json=actorTemplateName,proto3" json:"actor_template_name,omitempty"`
 	ActorId                string                 `protobuf:"bytes,5,opt,name=actor_id,json=actorId,proto3" json:"actor_id,omitempty"`
 	Runsc                  *RunscConfig           `protobuf:"bytes,8,opt,name=runsc,proto3" json:"runsc,omitempty"`
 	Spec                   *WorkloadSpec          `protobuf:"bytes,7,opt,name=spec,proto3" json:"spec,omitempty"`
-	unknownFields          protoimpl.UnknownFields
-	sizeCache              protoimpl.SizeCache
+	// The worker pool this actor belongs to, used to pick a free ateom.
+	WorkerPoolNamespace string `protobuf:"bytes,9,opt,name=worker_pool_namespace,json=workerPoolNamespace,proto3" json:"worker_pool_namespace,omitempty"`
+	WorkerPoolName      string `protobuf:"bytes,10,opt,name=worker_pool_name,json=workerPoolName,proto3" json:"worker_pool_name,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *RunRequest) Reset() {
@@ -76,20 +77,6 @@ func (x *RunRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use RunRequest.ProtoReflect.Descriptor instead.
 func (*RunRequest) Descriptor() ([]byte, []int) {
 	return file_atelet_proto_rawDescGZIP(), []int{0}
-}
-
-func (x *RunRequest) GetTargetAteomNamespace() string {
-	if x != nil {
-		return x.TargetAteomNamespace
-	}
-	return ""
-}
-
-func (x *RunRequest) GetTargetAteomName() string {
-	if x != nil {
-		return x.TargetAteomName
-	}
-	return ""
 }
 
 func (x *RunRequest) GetActorTemplateNamespace() string {
@@ -125,6 +112,20 @@ func (x *RunRequest) GetSpec() *WorkloadSpec {
 		return x.Spec
 	}
 	return nil
+}
+
+func (x *RunRequest) GetWorkerPoolNamespace() string {
+	if x != nil {
+		return x.WorkerPoolNamespace
+	}
+	return ""
+}
+
+func (x *RunRequest) GetWorkerPoolName() string {
+	if x != nil {
+		return x.WorkerPoolName
+	}
+	return ""
 }
 
 type GCPAuthenticationConfig struct {
@@ -505,9 +506,12 @@ func (x *EnvEntry) GetValue() string {
 }
 
 type RunResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	WorkerPodNamespace string                 `protobuf:"bytes,1,opt,name=worker_pod_namespace,json=workerPodNamespace,proto3" json:"worker_pod_namespace,omitempty"`
+	WorkerPodName      string                 `protobuf:"bytes,2,opt,name=worker_pod_name,json=workerPodName,proto3" json:"worker_pod_name,omitempty"`
+	WorkerPodIp        string                 `protobuf:"bytes,3,opt,name=worker_pod_ip,json=workerPodIp,proto3" json:"worker_pod_ip,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *RunResponse) Reset() {
@@ -540,10 +544,29 @@ func (*RunResponse) Descriptor() ([]byte, []int) {
 	return file_atelet_proto_rawDescGZIP(), []int{8}
 }
 
+func (x *RunResponse) GetWorkerPodNamespace() string {
+	if x != nil {
+		return x.WorkerPodNamespace
+	}
+	return ""
+}
+
+func (x *RunResponse) GetWorkerPodName() string {
+	if x != nil {
+		return x.WorkerPodName
+	}
+	return ""
+}
+
+func (x *RunResponse) GetWorkerPodIp() string {
+	if x != nil {
+		return x.WorkerPodIp
+	}
+	return ""
+}
+
 type CheckpointRequest struct {
 	state                  protoimpl.MessageState `protogen:"open.v1"`
-	TargetAteomNamespace   string                 `protobuf:"bytes,1,opt,name=target_ateom_namespace,json=targetAteomNamespace,proto3" json:"target_ateom_namespace,omitempty"`
-	TargetAteomName        string                 `protobuf:"bytes,2,opt,name=target_ateom_name,json=targetAteomName,proto3" json:"target_ateom_name,omitempty"`
 	ActorTemplateNamespace string                 `protobuf:"bytes,3,opt,name=actor_template_namespace,json=actorTemplateNamespace,proto3" json:"actor_template_namespace,omitempty"`
 	ActorTemplateName      string                 `protobuf:"bytes,4,opt,name=actor_template_name,json=actorTemplateName,proto3" json:"actor_template_name,omitempty"`
 	ActorId                string                 `protobuf:"bytes,5,opt,name=actor_id,json=actorId,proto3" json:"actor_id,omitempty"`
@@ -592,20 +615,6 @@ func (x *CheckpointRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use CheckpointRequest.ProtoReflect.Descriptor instead.
 func (*CheckpointRequest) Descriptor() ([]byte, []int) {
 	return file_atelet_proto_rawDescGZIP(), []int{9}
-}
-
-func (x *CheckpointRequest) GetTargetAteomNamespace() string {
-	if x != nil {
-		return x.TargetAteomNamespace
-	}
-	return ""
-}
-
-func (x *CheckpointRequest) GetTargetAteomName() string {
-	if x != nil {
-		return x.TargetAteomName
-	}
-	return ""
 }
 
 func (x *CheckpointRequest) GetActorTemplateNamespace() string {
@@ -688,8 +697,6 @@ func (*CheckpointResponse) Descriptor() ([]byte, []int) {
 
 type RestoreRequest struct {
 	state                  protoimpl.MessageState `protogen:"open.v1"`
-	TargetAteomNamespace   string                 `protobuf:"bytes,1,opt,name=target_ateom_namespace,json=targetAteomNamespace,proto3" json:"target_ateom_namespace,omitempty"`
-	TargetAteomName        string                 `protobuf:"bytes,2,opt,name=target_ateom_name,json=targetAteomName,proto3" json:"target_ateom_name,omitempty"`
 	ActorTemplateNamespace string                 `protobuf:"bytes,3,opt,name=actor_template_namespace,json=actorTemplateNamespace,proto3" json:"actor_template_namespace,omitempty"`
 	ActorTemplateName      string                 `protobuf:"bytes,4,opt,name=actor_template_name,json=actorTemplateName,proto3" json:"actor_template_name,omitempty"`
 	ActorId                string                 `protobuf:"bytes,5,opt,name=actor_id,json=actorId,proto3" json:"actor_id,omitempty"`
@@ -697,8 +704,11 @@ type RestoreRequest struct {
 	Spec                   *WorkloadSpec          `protobuf:"bytes,7,opt,name=spec,proto3" json:"spec,omitempty"`
 	// The object storage URI prefix of the snapshot to restore.
 	SnapshotUriPrefix string `protobuf:"bytes,8,opt,name=snapshot_uri_prefix,json=snapshotUriPrefix,proto3" json:"snapshot_uri_prefix,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// The worker pool this actor belongs to, used to pick a free ateom.
+	WorkerPoolNamespace string `protobuf:"bytes,9,opt,name=worker_pool_namespace,json=workerPoolNamespace,proto3" json:"worker_pool_namespace,omitempty"`
+	WorkerPoolName      string `protobuf:"bytes,10,opt,name=worker_pool_name,json=workerPoolName,proto3" json:"worker_pool_name,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *RestoreRequest) Reset() {
@@ -729,20 +739,6 @@ func (x *RestoreRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use RestoreRequest.ProtoReflect.Descriptor instead.
 func (*RestoreRequest) Descriptor() ([]byte, []int) {
 	return file_atelet_proto_rawDescGZIP(), []int{11}
-}
-
-func (x *RestoreRequest) GetTargetAteomNamespace() string {
-	if x != nil {
-		return x.TargetAteomNamespace
-	}
-	return ""
-}
-
-func (x *RestoreRequest) GetTargetAteomName() string {
-	if x != nil {
-		return x.TargetAteomName
-	}
-	return ""
 }
 
 func (x *RestoreRequest) GetActorTemplateNamespace() string {
@@ -787,10 +783,27 @@ func (x *RestoreRequest) GetSnapshotUriPrefix() string {
 	return ""
 }
 
+func (x *RestoreRequest) GetWorkerPoolNamespace() string {
+	if x != nil {
+		return x.WorkerPoolNamespace
+	}
+	return ""
+}
+
+func (x *RestoreRequest) GetWorkerPoolName() string {
+	if x != nil {
+		return x.WorkerPoolName
+	}
+	return ""
+}
+
 type RestoreResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	WorkerPodNamespace string                 `protobuf:"bytes,1,opt,name=worker_pod_namespace,json=workerPodNamespace,proto3" json:"worker_pod_namespace,omitempty"`
+	WorkerPodName      string                 `protobuf:"bytes,2,opt,name=worker_pod_name,json=workerPodName,proto3" json:"worker_pod_name,omitempty"`
+	WorkerPodIp        string                 `protobuf:"bytes,3,opt,name=worker_pod_ip,json=workerPodIp,proto3" json:"worker_pod_ip,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *RestoreResponse) Reset() {
@@ -823,20 +836,192 @@ func (*RestoreResponse) Descriptor() ([]byte, []int) {
 	return file_atelet_proto_rawDescGZIP(), []int{12}
 }
 
+func (x *RestoreResponse) GetWorkerPodNamespace() string {
+	if x != nil {
+		return x.WorkerPodNamespace
+	}
+	return ""
+}
+
+func (x *RestoreResponse) GetWorkerPodName() string {
+	if x != nil {
+		return x.WorkerPodName
+	}
+	return ""
+}
+
+func (x *RestoreResponse) GetWorkerPodIp() string {
+	if x != nil {
+		return x.WorkerPodIp
+	}
+	return ""
+}
+
+type WatchCapacityRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WatchCapacityRequest) Reset() {
+	*x = WatchCapacityRequest{}
+	mi := &file_atelet_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WatchCapacityRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WatchCapacityRequest) ProtoMessage() {}
+
+func (x *WatchCapacityRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_atelet_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WatchCapacityRequest.ProtoReflect.Descriptor instead.
+func (*WatchCapacityRequest) Descriptor() ([]byte, []int) {
+	return file_atelet_proto_rawDescGZIP(), []int{13}
+}
+
+// CapacitySnapshot is the full capacity state for all worker pools on a node.
+// Atelet sends one on connect and re-sends after every capacity change.
+type CapacitySnapshot struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Pools         []*PoolCapacity        `protobuf:"bytes,1,rep,name=pools,proto3" json:"pools,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CapacitySnapshot) Reset() {
+	*x = CapacitySnapshot{}
+	mi := &file_atelet_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CapacitySnapshot) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CapacitySnapshot) ProtoMessage() {}
+
+func (x *CapacitySnapshot) ProtoReflect() protoreflect.Message {
+	mi := &file_atelet_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CapacitySnapshot.ProtoReflect.Descriptor instead.
+func (*CapacitySnapshot) Descriptor() ([]byte, []int) {
+	return file_atelet_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *CapacitySnapshot) GetPools() []*PoolCapacity {
+	if x != nil {
+		return x.Pools
+	}
+	return nil
+}
+
+type PoolCapacity struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	PoolNamespace string                 `protobuf:"bytes,1,opt,name=pool_namespace,json=poolNamespace,proto3" json:"pool_namespace,omitempty"`
+	PoolName      string                 `protobuf:"bytes,2,opt,name=pool_name,json=poolName,proto3" json:"pool_name,omitempty"`
+	Free          int32                  `protobuf:"varint,3,opt,name=free,proto3" json:"free,omitempty"`
+	Total         int32                  `protobuf:"varint,4,opt,name=total,proto3" json:"total,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PoolCapacity) Reset() {
+	*x = PoolCapacity{}
+	mi := &file_atelet_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PoolCapacity) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PoolCapacity) ProtoMessage() {}
+
+func (x *PoolCapacity) ProtoReflect() protoreflect.Message {
+	mi := &file_atelet_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PoolCapacity.ProtoReflect.Descriptor instead.
+func (*PoolCapacity) Descriptor() ([]byte, []int) {
+	return file_atelet_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *PoolCapacity) GetPoolNamespace() string {
+	if x != nil {
+		return x.PoolNamespace
+	}
+	return ""
+}
+
+func (x *PoolCapacity) GetPoolName() string {
+	if x != nil {
+		return x.PoolName
+	}
+	return ""
+}
+
+func (x *PoolCapacity) GetFree() int32 {
+	if x != nil {
+		return x.Free
+	}
+	return 0
+}
+
+func (x *PoolCapacity) GetTotal() int32 {
+	if x != nil {
+		return x.Total
+	}
+	return 0
+}
+
 var File_atelet_proto protoreflect.FileDescriptor
 
 const file_atelet_proto_rawDesc = "" +
 	"\n" +
-	"\fatelet.proto\x12\x06atelet\"\xc8\x02\n" +
+	"\fatelet.proto\x12\x06atelet\"\xc4\x02\n" +
 	"\n" +
-	"RunRequest\x124\n" +
-	"\x16target_ateom_namespace\x18\x01 \x01(\tR\x14targetAteomNamespace\x12*\n" +
-	"\x11target_ateom_name\x18\x02 \x01(\tR\x0ftargetAteomName\x128\n" +
+	"RunRequest\x128\n" +
 	"\x18actor_template_namespace\x18\x03 \x01(\tR\x16actorTemplateNamespace\x12.\n" +
 	"\x13actor_template_name\x18\x04 \x01(\tR\x11actorTemplateName\x12\x19\n" +
 	"\bactor_id\x18\x05 \x01(\tR\aactorId\x12)\n" +
 	"\x05runsc\x18\b \x01(\v2\x13.atelet.RunscConfigR\x05runsc\x12(\n" +
-	"\x04spec\x18\a \x01(\v2\x14.atelet.WorkloadSpecR\x04spec\"+\n" +
+	"\x04spec\x18\a \x01(\v2\x14.atelet.WorkloadSpecR\x04spec\x122\n" +
+	"\x15worker_pool_namespace\x18\t \x01(\tR\x13workerPoolNamespace\x12(\n" +
+	"\x10worker_pool_name\x18\n" +
+	" \x01(\tR\x0eworkerPoolName\"+\n" +
 	"\x17GCPAuthenticationConfig\x12\x10\n" +
 	"\x03use\x18\x01 \x01(\bR\x03use\"I\n" +
 	"\x14AuthenticationConfig\x121\n" +
@@ -862,33 +1047,47 @@ const file_atelet_proto_rawDesc = "" +
 	"\x03env\x18\x04 \x03(\v2\x10.atelet.EnvEntryR\x03env\"4\n" +
 	"\bEnvEntry\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value\"\r\n" +
-	"\vRunResponse\"\xff\x02\n" +
-	"\x11CheckpointRequest\x124\n" +
-	"\x16target_ateom_namespace\x18\x01 \x01(\tR\x14targetAteomNamespace\x12*\n" +
-	"\x11target_ateom_name\x18\x02 \x01(\tR\x0ftargetAteomName\x128\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value\"\x8b\x01\n" +
+	"\vRunResponse\x120\n" +
+	"\x14worker_pod_namespace\x18\x01 \x01(\tR\x12workerPodNamespace\x12&\n" +
+	"\x0fworker_pod_name\x18\x02 \x01(\tR\rworkerPodName\x12\"\n" +
+	"\rworker_pod_ip\x18\x03 \x01(\tR\vworkerPodIp\"\x9d\x02\n" +
+	"\x11CheckpointRequest\x128\n" +
 	"\x18actor_template_namespace\x18\x03 \x01(\tR\x16actorTemplateNamespace\x12.\n" +
 	"\x13actor_template_name\x18\x04 \x01(\tR\x11actorTemplateName\x12\x19\n" +
 	"\bactor_id\x18\x05 \x01(\tR\aactorId\x12)\n" +
 	"\x05runsc\x18\x06 \x01(\v2\x13.atelet.RunscConfigR\x05runsc\x12(\n" +
 	"\x04spec\x18\a \x01(\v2\x14.atelet.WorkloadSpecR\x04spec\x12.\n" +
 	"\x13snapshot_uri_prefix\x18\b \x01(\tR\x11snapshotUriPrefix\"\x14\n" +
-	"\x12CheckpointResponse\"\xfc\x02\n" +
-	"\x0eRestoreRequest\x124\n" +
-	"\x16target_ateom_namespace\x18\x01 \x01(\tR\x14targetAteomNamespace\x12*\n" +
-	"\x11target_ateom_name\x18\x02 \x01(\tR\x0ftargetAteomName\x128\n" +
+	"\x12CheckpointResponse\"\xf8\x02\n" +
+	"\x0eRestoreRequest\x128\n" +
 	"\x18actor_template_namespace\x18\x03 \x01(\tR\x16actorTemplateNamespace\x12.\n" +
 	"\x13actor_template_name\x18\x04 \x01(\tR\x11actorTemplateName\x12\x19\n" +
 	"\bactor_id\x18\x05 \x01(\tR\aactorId\x12)\n" +
 	"\x05runsc\x18\x06 \x01(\v2\x13.atelet.RunscConfigR\x05runsc\x12(\n" +
 	"\x04spec\x18\a \x01(\v2\x14.atelet.WorkloadSpecR\x04spec\x12.\n" +
-	"\x13snapshot_uri_prefix\x18\b \x01(\tR\x11snapshotUriPrefix\"\x11\n" +
-	"\x0fRestoreResponse2\xc4\x01\n" +
+	"\x13snapshot_uri_prefix\x18\b \x01(\tR\x11snapshotUriPrefix\x122\n" +
+	"\x15worker_pool_namespace\x18\t \x01(\tR\x13workerPoolNamespace\x12(\n" +
+	"\x10worker_pool_name\x18\n" +
+	" \x01(\tR\x0eworkerPoolName\"\x8f\x01\n" +
+	"\x0fRestoreResponse\x120\n" +
+	"\x14worker_pod_namespace\x18\x01 \x01(\tR\x12workerPodNamespace\x12&\n" +
+	"\x0fworker_pod_name\x18\x02 \x01(\tR\rworkerPodName\x12\"\n" +
+	"\rworker_pod_ip\x18\x03 \x01(\tR\vworkerPodIp\"\x16\n" +
+	"\x14WatchCapacityRequest\">\n" +
+	"\x10CapacitySnapshot\x12*\n" +
+	"\x05pools\x18\x01 \x03(\v2\x14.atelet.PoolCapacityR\x05pools\"|\n" +
+	"\fPoolCapacity\x12%\n" +
+	"\x0epool_namespace\x18\x01 \x01(\tR\rpoolNamespace\x12\x1b\n" +
+	"\tpool_name\x18\x02 \x01(\tR\bpoolName\x12\x12\n" +
+	"\x04free\x18\x03 \x01(\x05R\x04free\x12\x14\n" +
+	"\x05total\x18\x04 \x01(\x05R\x05total2\x91\x02\n" +
 	"\vAteomHerder\x120\n" +
 	"\x03Run\x12\x12.atelet.RunRequest\x1a\x13.atelet.RunResponse\"\x00\x12E\n" +
 	"\n" +
 	"Checkpoint\x12\x19.atelet.CheckpointRequest\x1a\x1a.atelet.CheckpointResponse\"\x00\x12<\n" +
-	"\aRestore\x12\x16.atelet.RestoreRequest\x1a\x17.atelet.RestoreResponse\"\x00B>Z<github.com/agent-substrate/substrate/internal/proto/ateletpbb\x06proto3"
+	"\aRestore\x12\x16.atelet.RestoreRequest\x1a\x17.atelet.RestoreResponse\"\x00\x12K\n" +
+	"\rWatchCapacity\x12\x1c.atelet.WatchCapacityRequest\x1a\x18.atelet.CapacitySnapshot\"\x000\x01B>Z<github.com/agent-substrate/substrate/internal/proto/ateletpbb\x06proto3"
 
 var (
 	file_atelet_proto_rawDescOnce sync.Once
@@ -902,7 +1101,7 @@ func file_atelet_proto_rawDescGZIP() []byte {
 	return file_atelet_proto_rawDescData
 }
 
-var file_atelet_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
+var file_atelet_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
 var file_atelet_proto_goTypes = []any{
 	(*RunRequest)(nil),              // 0: atelet.RunRequest
 	(*GCPAuthenticationConfig)(nil), // 1: atelet.GCPAuthenticationConfig
@@ -917,6 +1116,9 @@ var file_atelet_proto_goTypes = []any{
 	(*CheckpointResponse)(nil),      // 10: atelet.CheckpointResponse
 	(*RestoreRequest)(nil),          // 11: atelet.RestoreRequest
 	(*RestoreResponse)(nil),         // 12: atelet.RestoreResponse
+	(*WatchCapacityRequest)(nil),    // 13: atelet.WatchCapacityRequest
+	(*CapacitySnapshot)(nil),        // 14: atelet.CapacitySnapshot
+	(*PoolCapacity)(nil),            // 15: atelet.PoolCapacity
 }
 var file_atelet_proto_depIdxs = []int32{
 	4,  // 0: atelet.RunRequest.runsc:type_name -> atelet.RunscConfig
@@ -931,17 +1133,20 @@ var file_atelet_proto_depIdxs = []int32{
 	5,  // 9: atelet.CheckpointRequest.spec:type_name -> atelet.WorkloadSpec
 	4,  // 10: atelet.RestoreRequest.runsc:type_name -> atelet.RunscConfig
 	5,  // 11: atelet.RestoreRequest.spec:type_name -> atelet.WorkloadSpec
-	0,  // 12: atelet.AteomHerder.Run:input_type -> atelet.RunRequest
-	9,  // 13: atelet.AteomHerder.Checkpoint:input_type -> atelet.CheckpointRequest
-	11, // 14: atelet.AteomHerder.Restore:input_type -> atelet.RestoreRequest
-	8,  // 15: atelet.AteomHerder.Run:output_type -> atelet.RunResponse
-	10, // 16: atelet.AteomHerder.Checkpoint:output_type -> atelet.CheckpointResponse
-	12, // 17: atelet.AteomHerder.Restore:output_type -> atelet.RestoreResponse
-	15, // [15:18] is the sub-list for method output_type
-	12, // [12:15] is the sub-list for method input_type
-	12, // [12:12] is the sub-list for extension type_name
-	12, // [12:12] is the sub-list for extension extendee
-	0,  // [0:12] is the sub-list for field type_name
+	15, // 12: atelet.CapacitySnapshot.pools:type_name -> atelet.PoolCapacity
+	0,  // 13: atelet.AteomHerder.Run:input_type -> atelet.RunRequest
+	9,  // 14: atelet.AteomHerder.Checkpoint:input_type -> atelet.CheckpointRequest
+	11, // 15: atelet.AteomHerder.Restore:input_type -> atelet.RestoreRequest
+	13, // 16: atelet.AteomHerder.WatchCapacity:input_type -> atelet.WatchCapacityRequest
+	8,  // 17: atelet.AteomHerder.Run:output_type -> atelet.RunResponse
+	10, // 18: atelet.AteomHerder.Checkpoint:output_type -> atelet.CheckpointResponse
+	12, // 19: atelet.AteomHerder.Restore:output_type -> atelet.RestoreResponse
+	14, // 20: atelet.AteomHerder.WatchCapacity:output_type -> atelet.CapacitySnapshot
+	17, // [17:21] is the sub-list for method output_type
+	13, // [13:17] is the sub-list for method input_type
+	13, // [13:13] is the sub-list for extension type_name
+	13, // [13:13] is the sub-list for extension extendee
+	0,  // [0:13] is the sub-list for field type_name
 }
 
 func init() { file_atelet_proto_init() }
@@ -955,7 +1160,7 @@ func file_atelet_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_atelet_proto_rawDesc), len(file_atelet_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   13,
+			NumMessages:   16,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

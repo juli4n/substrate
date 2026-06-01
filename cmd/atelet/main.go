@@ -19,6 +19,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -32,6 +33,8 @@ import (
 	"strings"
 
 	"cloud.google.com/go/storage"
+	"github.com/agent-substrate/substrate/cmd/atelet/internal/ateom"
+	"github.com/agent-substrate/substrate/cmd/atelet/internal/workerstore"
 	"github.com/agent-substrate/substrate/internal/ategcs"
 	"github.com/agent-substrate/substrate/internal/ateinterceptors"
 	"github.com/agent-substrate/substrate/internal/ateompath"
@@ -57,9 +60,11 @@ import (
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/api/option"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/reflection"
-	"k8s.io/utils/lru"
+	"google.golang.org/grpc/status"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 )
 
 var (
@@ -68,6 +73,9 @@ var (
 
 	gcpAuthForImagePulls         = flag.Bool("gcp-auth-for-image-pulls", true, "Use GCP application default credentials mechanism.")
 	localhostRegistryReplacement = flag.String("localhost-registry-replacement", "", "The replacement registry endpoint for localhost and/or loopback IP addresses, useful for local development. for example kind-registry:5000")
+
+	nodeName  = flag.String("node-name", "", "The Kubernetes node name this atelet runs on. Used to scope the worker pod informer.")
+	bboltPath = flag.String("bbolt-path", "/var/lib/atelet/workers.db", "Path to the bbolt database file for worker pod bookkeeping.")
 )
 
 func main() {
@@ -97,18 +105,10 @@ func main() {
 		}
 	}()
 
-	go func() {
-		mux := http.NewServeMux()
-		mux.Handle("/metrics", promhttp.Handler())
-		slog.InfoContext(ctx, fmt.Sprintf("Starting Prometheus metrics server on %s", *metricsListenAddr))
-		if err := http.ListenAndServe(*metricsListenAddr, mux); err != nil {
-			slog.Error("Failed to start prometheus metrics server", slog.Any("err", err))
-		}
-	}()
+	metricsMux := http.NewServeMux()
+	metricsMux.Handle("/metrics", promhttp.Handler())
 
-	ateomDialer := &AteomDialer{
-		conns: lru.New(256),
-	}
+	ateomDialer := ateom.NewDialer()
 
 	var gcpRegistryAuthn authn.Authenticator
 	if *gcpAuthForImagePulls {
@@ -170,12 +170,76 @@ func main() {
 		wrappedGCS = ategcs.NewGCSClient(gcsClient)
 	}
 
+	if *nodeName == "" {
+		*nodeName = os.Getenv("NODE_NAME")
+	}
+	if *nodeName == "" {
+		slog.ErrorContext(ctx, "node-name flag or NODE_NAME env var is required")
+		os.Exit(1)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(*bboltPath), 0o700); err != nil {
+		slog.ErrorContext(ctx, "Failed to create bbolt directory", slog.Any("err", err))
+		os.Exit(1)
+	}
+
+	broadcaster := workerstore.NewBroadcaster()
+
+	workerStore, err := workerstore.NewStore(*bboltPath, broadcaster)
+	if err != nil {
+		slog.ErrorContext(ctx, "Failed to open worker store", slog.Any("err", err))
+		os.Exit(1)
+	}
+	defer workerStore.Close()
+
+	metricsMux.HandleFunc("/debug/storez", func(w http.ResponseWriter, r *http.Request) {
+		dump, err := workerStore.Dump()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		enc := json.NewEncoder(w)
+		enc.SetIndent("", "  ")
+		enc.Encode(dump) //nolint:errcheck
+	})
+	go func() {
+		slog.InfoContext(ctx, fmt.Sprintf("Starting metrics/debug server on %s", *metricsListenAddr))
+		if err := http.ListenAndServe(*metricsListenAddr, metricsMux); err != nil {
+			slog.Error("Failed to start metrics server", slog.Any("err", err))
+		}
+	}()
+
+	k8sConfig, err := rest.InClusterConfig()
+	if err != nil {
+		slog.ErrorContext(ctx, "Failed to get in-cluster config", slog.Any("err", err))
+		os.Exit(1)
+	}
+	k8sClient, err := kubernetes.NewForConfig(k8sConfig)
+	if err != nil {
+		slog.ErrorContext(ctx, "Failed to create Kubernetes client", slog.Any("err", err))
+		os.Exit(1)
+	}
+
+	workerInformerFactory, workerInformer := NewWorkerPodInformer(k8sClient, *nodeName)
+	stopCh := ctx.Done()
+	workerInformerFactory.Start(stopCh)
+	workerInformerFactory.WaitForCacheSync(stopCh)
+
+	go func() {
+		if err := NewWorkerPoolSyncer(workerInformer, workerStore).Run(ctx); err != nil {
+			slog.ErrorContext(ctx, "WorkerPoolSyncer stopped", slog.Any("err", err))
+		}
+	}()
+
 	wmService := NewService(
 		ctx,
 		ateomDialer,
 		wrappedAnonGCS,
 		wrappedGCS,
 		pullCache,
+		workerStore,
+		broadcaster,
 	)
 
 	lis, err := net.Listen("tcp", ":"+strconv.Itoa(*port))
@@ -264,29 +328,34 @@ func initMetrics(ctx context.Context) (*sdkmetric.MeterProvider, error) {
 type AteomHerder struct {
 	ateletpb.UnimplementedAteomHerderServer
 
-	ateomDialer   *AteomDialer
+	ateomDialer   *ateom.Dialer
 	pullCache     *memorypullcache.MemoryPullCache
 	anonGCSClient ategcs.ObjectStorage
 	gcsClient     ategcs.ObjectStorage
+	workerStore   *workerstore.Store
+	broadcaster   *workerstore.Broadcaster
 }
 
 var _ ateletpb.AteomHerderServer = (*AteomHerder)(nil)
 
-// NewService creates a new WorkersManagerService.
+// NewService creates a new AteomHerder service.
 func NewService(
 	ctx context.Context,
-	ateomDialer *AteomDialer,
+	ateomDialer *ateom.Dialer,
 	anonGCSClient ategcs.ObjectStorage,
 	gcsClient ategcs.ObjectStorage,
 	pullCache *memorypullcache.MemoryPullCache,
+	workerStore *workerstore.Store,
+	broadcaster *workerstore.Broadcaster,
 ) *AteomHerder {
-	wms := &AteomHerder{
+	return &AteomHerder{
 		ateomDialer:   ateomDialer,
 		pullCache:     pullCache,
 		anonGCSClient: anonGCSClient,
 		gcsClient:     gcsClient,
+		workerStore:   workerStore,
+		broadcaster:   broadcaster,
 	}
-	return wms
 }
 
 func (s *AteomHerder) fetchRunsc(ctx context.Context, cfg *ateletpb.RunscConfig) (string, error) {
@@ -358,6 +427,14 @@ func (s *AteomHerder) fetchRunsc(ctx context.Context, cfg *ateletpb.RunscConfig)
 }
 
 func (s *AteomHerder) Run(ctx context.Context, req *ateletpb.RunRequest) (*ateletpb.RunResponse, error) {
+	assignedPod, podIP, err := s.workerStore.AssignWorkerPod(req.GetActorId(), workerstore.WorkerPoolName{Namespace: req.GetWorkerPoolNamespace(), Name: req.GetWorkerPoolName()})
+	if err != nil {
+		if errors.Is(err, workerstore.ErrNoFreeWorkerPods) {
+			return nil, status.Errorf(codes.ResourceExhausted, "no free worker pods for pool %s/%s", req.GetWorkerPoolNamespace(), req.GetWorkerPoolName())
+		}
+		return nil, err
+	}
+
 	// Create static files dir if it doesn't exist.
 	if err := os.MkdirAll(ateompath.StaticFilesDir, 0o700); err != nil {
 		return nil, fmt.Errorf("while creating static files dir: %w", err)
@@ -374,7 +451,7 @@ func (s *AteomHerder) Run(ctx context.Context, req *ateletpb.RunRequest) (*atele
 		return nil, fmt.Errorf("while resetting actor dirs: %w", err)
 	}
 
-	netnsPath := ateompath.AteomNetNSPath(req.GetTargetAteomNamespace(), req.GetTargetAteomName())
+	netnsPath := ateompath.AteomNetNSPath(assignedPod.Namespace, assignedPod.Name)
 
 	g, gCtx := errgroup.WithContext(ctx)
 
@@ -438,9 +515,9 @@ func (s *AteomHerder) Run(ctx context.Context, req *ateletpb.RunRequest) (*atele
 	}
 
 	// Dial correct ateom over UDS.
-	ateomConn, err := s.ateomDialer.DialAteomPod(ctx, req.GetTargetAteomNamespace(), req.GetTargetAteomName())
+	ateomConn, err := s.ateomDialer.DialPod(ctx, assignedPod.Namespace, assignedPod.Name)
 	if err != nil {
-		return nil, fmt.Errorf("while getting ateom conn for %s/%s: %w", req.GetTargetAteomNamespace(), req.GetTargetAteomName(), err)
+		return nil, fmt.Errorf("while getting ateom conn for %s: %w", assignedPod, err)
 	}
 	client := ateompb.NewAteomClient(ateomConn)
 
@@ -464,10 +541,23 @@ func (s *AteomHerder) Run(ctx context.Context, req *ateletpb.RunRequest) (*atele
 		return nil, fmt.Errorf("while calling ateom.RunWorkload: %w", err)
 	}
 
-	return &ateletpb.RunResponse{}, nil
+	return &ateletpb.RunResponse{
+		WorkerPodNamespace: assignedPod.Namespace,
+		WorkerPodName:      assignedPod.Name,
+		WorkerPodIp:        podIP,
+	}, nil
 }
 
 func (s *AteomHerder) Checkpoint(ctx context.Context, req *ateletpb.CheckpointRequest) (*ateletpb.CheckpointResponse, error) {
+	// Look up the pod assigned to this actor from the store.
+	assignedPod, _, found, err := s.workerStore.GetWorkerPodAssignment(req.GetActorId())
+	if err != nil {
+		return nil, fmt.Errorf("while looking up assignment for actor %s: %w", req.GetActorId(), err)
+	}
+	if !found {
+		return nil, fmt.Errorf("actor %s has no assigned pod on this node", req.GetActorId())
+	}
+
 	// Create static files dir if it doesn't exist.
 	if err := os.MkdirAll(ateompath.StaticFilesDir, 0o700); err != nil {
 		return nil, fmt.Errorf("while creating static files dir: %w", err)
@@ -482,9 +572,9 @@ func (s *AteomHerder) Checkpoint(ctx context.Context, req *ateletpb.CheckpointRe
 	checkpointDir := ateompath.CheckpointDir(req.GetActorTemplateNamespace(), req.GetActorTemplateName(), req.GetActorId())
 
 	// Dial correct ateom over UDS.
-	ateomConn, err := s.ateomDialer.DialAteomPod(ctx, req.GetTargetAteomNamespace(), req.GetTargetAteomName())
+	ateomConn, err := s.ateomDialer.DialPod(ctx, assignedPod.Namespace, assignedPod.Name)
 	if err != nil {
-		return nil, fmt.Errorf("while getting ateom conn for %s/%s: %w", req.GetTargetAteomNamespace(), req.GetTargetAteomName(), err)
+		return nil, fmt.Errorf("while getting ateom conn for %s: %w", assignedPod, err)
 	}
 	client := ateompb.NewAteomClient(ateomConn)
 
@@ -561,10 +651,23 @@ func (s *AteomHerder) Checkpoint(ctx context.Context, req *ateletpb.CheckpointRe
 		return nil, fmt.Errorf("while resetting actor dirs: %w", err)
 	}
 
+	// Release the pod back to the free pool now that the workload is gone.
+	if err := s.workerStore.UnassignWorkerPod(req.GetActorId()); err != nil {
+		return nil, fmt.Errorf("while freeing worker pod for actor %s: %w", req.GetActorId(), err)
+	}
+
 	return &ateletpb.CheckpointResponse{}, nil
 }
 
 func (s *AteomHerder) Restore(ctx context.Context, req *ateletpb.RestoreRequest) (*ateletpb.RestoreResponse, error) {
+	assignedPod, podIP, err := s.workerStore.AssignWorkerPod(req.GetActorId(), workerstore.WorkerPoolName{Namespace: req.GetWorkerPoolNamespace(), Name: req.GetWorkerPoolName()})
+	if err != nil {
+		if errors.Is(err, workerstore.ErrNoFreeWorkerPods) {
+			return nil, status.Errorf(codes.ResourceExhausted, "no free worker pods for pool %s/%s", req.GetWorkerPoolNamespace(), req.GetWorkerPoolName())
+		}
+		return nil, err
+	}
+
 	// Create static files dir if it doesn't exist.
 	if err := os.MkdirAll(ateompath.StaticFilesDir, 0o700); err != nil {
 		return nil, fmt.Errorf("while creating static files dir: %w", err)
@@ -623,7 +726,7 @@ func (s *AteomHerder) Restore(ctx context.Context, req *ateletpb.RestoreRequest)
 		return nil, err
 	}
 
-	netnsPath := ateompath.AteomNetNSPath(req.GetTargetAteomNamespace(), req.GetTargetAteomName())
+	netnsPath := ateompath.AteomNetNSPath(assignedPod.Namespace, assignedPod.Name)
 
 	g, gCtx = errgroup.WithContext(ctx)
 
@@ -687,9 +790,9 @@ func (s *AteomHerder) Restore(ctx context.Context, req *ateletpb.RestoreRequest)
 	}
 
 	// Dial correct ateom over UDS.
-	ateomConn, err := s.ateomDialer.DialAteomPod(ctx, req.GetTargetAteomNamespace(), req.GetTargetAteomName())
+	ateomConn, err := s.ateomDialer.DialPod(ctx, assignedPod.Namespace, assignedPod.Name)
 	if err != nil {
-		return nil, fmt.Errorf("while getting ateom conn for %s/%s: %w", req.GetTargetAteomNamespace(), req.GetTargetAteomName(), err)
+		return nil, fmt.Errorf("while getting ateom conn for %s: %w", assignedPod, err)
 	}
 	client := ateompb.NewAteomClient(ateomConn)
 
@@ -713,34 +816,13 @@ func (s *AteomHerder) Restore(ctx context.Context, req *ateletpb.RestoreRequest)
 		return nil, fmt.Errorf("while calling ateom.RestoreWorkload: %w", err)
 	}
 
-	return &ateletpb.RestoreResponse{}, nil
+	return &ateletpb.RestoreResponse{
+		WorkerPodNamespace: assignedPod.Namespace,
+		WorkerPodName:      assignedPod.Name,
+		WorkerPodIp:        podIP,
+	}, nil
 }
 
-type AteomDialer struct {
-	conns *lru.Cache
-}
-
-func (d *AteomDialer) DialAteomPod(ctx context.Context, namespace, name string) (*grpc.ClientConn, error) {
-	key := namespace + "/" + name
-
-	connAny, ok := d.conns.Get(key)
-	if ok {
-		return connAny.(*grpc.ClientConn), nil
-	}
-
-	conn, err := grpc.NewClient(
-		"unix://"+ateompath.AteomSocketPath(namespace, name),
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("while creating atelet gRPC client connection: %w", err)
-	}
-
-	d.conns.Add(key, conn)
-
-	return conn, nil
-}
 
 func resetActorDirs(actorTemplateNamespace, actorTemplateName, actorID string) error {
 	// Explicitly leave runsc logs dir untouched.
@@ -778,4 +860,32 @@ func resetActorDirs(actorTemplateNamespace, actorTemplateName, actorID string) e
 	}
 
 	return nil
+}
+
+// WatchCapacity implements the AteomHerder.WatchCapacity streaming RPC.
+func (s *AteomHerder) WatchCapacity(_ *ateletpb.WatchCapacityRequest, stream ateletpb.AteomHerder_WatchCapacityServer) error {
+	// Subscribe before reading the first snapshot to avoid missing a change
+	// that occurs between the snapshot read and the subscription.
+	subID, ch := s.broadcaster.Subscribe()
+	defer s.broadcaster.Unsubscribe(subID)
+
+	ctx := stream.Context()
+	for {
+		snap, err := s.workerStore.CapacitySnapshot()
+		if err != nil {
+			return err
+		}
+		if err := stream.Send(snap); err != nil {
+			return err
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case _, ok := <-ch:
+			if !ok {
+				return nil
+			}
+		}
+	}
 }

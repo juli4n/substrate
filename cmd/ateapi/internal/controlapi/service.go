@@ -25,7 +25,6 @@ import (
 type Service struct {
 	ateapipb.UnimplementedControlServer
 	persistence         store.Interface
-	dialer              *AteletDialer
 	actorTemplateLister listersv1alpha1.ActorTemplateLister
 	actorWorkflow       *ActorWorkflow
 }
@@ -33,13 +32,10 @@ type Service struct {
 var _ ateapipb.ControlServer = (*Service)(nil)
 
 // NewService creates a service.
-func NewService(persistence store.Interface, actorTemplateLister listersv1alpha1.ActorTemplateLister, dialer *AteletDialer) *Service {
-	s := &Service{
+func NewService(persistence store.Interface, actorTemplateLister listersv1alpha1.ActorTemplateLister, am *AteletManager) *Service {
+	return &Service{
 		persistence:         persistence,
 		actorTemplateLister: actorTemplateLister,
-		dialer:              dialer,
-		actorWorkflow:       NewActorWorkflow(persistence, dialer, actorTemplateLister),
+		actorWorkflow:       NewActorWorkflow(persistence, am, actorTemplateLister),
 	}
-
-	return s
 }

@@ -19,23 +19,30 @@ package atelet;
 option go_package = "github.com/agent-substrate/substrate/internal/proto/ateletpb";
 
 service AteomHerder {
-  // Run tells atelet to create a new containerized workload from scratch on an
-  // ateom.
+  // Run tells atelet to create a new containerized workload from scratch on a
+  // free ateom. Atelet picks the ateom from its local pool. Idempotent: if the
+  // actor is already running on this node, returns OK with the existing pod.
+  // Returns RESOURCE_EXHAUSTED if no free ateoms are available.
   rpc Run(RunRequest) returns (RunResponse) {}
 
   // Checkpoint tells atelet to save the current state of the workload on an
-  // ateom to object storage, and then completely the ateom to a blank state
+  // ateom to object storage, and then reset the ateom to a blank state
   // (back to "available" state.)
   rpc Checkpoint(CheckpointRequest) returns (CheckpointResponse) {}
 
-  // Restore restores a workload from checkpoint onto an ateom.
+  // Restore restores a workload from checkpoint onto a free ateom. Atelet
+  // picks the ateom from its local pool. Idempotent: if the actor is already
+  // running on this node, returns OK with the existing pod.
+  // Returns RESOURCE_EXHAUSTED if no free ateoms are available.
   rpc Restore(RestoreRequest) returns (RestoreResponse) {}
+
+  // WatchCapacity streams capacity snapshots for all worker pools managed by
+  // this atelet. On connect and after every capacity change, atelet sends a
+  // complete CapacitySnapshot covering all pools on this node.
+  rpc WatchCapacity(WatchCapacityRequest) returns (stream CapacitySnapshot) {}
 }
 
 message RunRequest {
-  string target_ateom_namespace = 1;
-  string target_ateom_name      = 2;
-
   string actor_template_namespace = 3;
   string actor_template_name      = 4;
   string actor_id                 = 5;
@@ -43,6 +50,10 @@ message RunRequest {
   RunscConfig runsc = 8;
 
   WorkloadSpec spec = 7;
+
+  // The worker pool this actor should be scheduled on.
+  string worker_pool_namespace = 9;
+  string worker_pool_name      = 10;
 }
 
 message GCPAuthenticationConfig {
@@ -89,12 +100,12 @@ message EnvEntry {
 }
 
 message RunResponse {
+  string worker_pod_namespace = 1;
+  string worker_pod_name      = 2;
+  string worker_pod_ip        = 3;
 }
 
 message CheckpointRequest {
-  string target_ateom_namespace = 1;
-  string target_ateom_name      = 2;
-
   string actor_template_namespace = 3;
   string actor_template_name      = 4;
   string actor_id                 = 5;
@@ -121,9 +132,6 @@ message CheckpointResponse {
 }
 
 message RestoreRequest {
-  string target_ateom_namespace = 1;
-  string target_ateom_name      = 2;
-
   string actor_template_namespace = 3;
   string actor_template_name      = 4;
   string actor_id                 = 5;
@@ -134,8 +142,33 @@ message RestoreRequest {
 
   // The object storage URI prefix of the snapshot to restore.
   string snapshot_uri_prefix = 8;
+
+  // The worker pool this actor should be scheduled on.
+  string worker_pool_namespace = 9;
+  string worker_pool_name      = 10;
 }
 
 message RestoreResponse {
+  string worker_pod_namespace = 1;
+  string worker_pod_name      = 2;
+  string worker_pod_ip        = 3;
+}
 
+message WatchCapacityRequest {}
+
+// CapacitySnapshot is the full capacity state for all worker pools on a node.
+message CapacitySnapshot {
+  repeated PoolCapacity pools = 1;
+}
+
+// PoolCapacity reports worker pod availability for a single worker pool on one node.
+message PoolCapacity {
+  // pool_namespace is the Kubernetes namespace of the WorkerPool resource.
+  string pool_namespace = 1;
+  // pool_name is the name of the WorkerPool resource.
+  string pool_name      = 2;
+  // free is the number of worker pods not currently assigned to any actor.
+  int32  free           = 3;
+  // total is the total number of worker pods registered on this node for this pool.
+  int32  total          = 4;
 }

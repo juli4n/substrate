@@ -219,16 +219,6 @@ func actorStatusString(s ateapipb.Actor_Status) string {
 	}
 }
 
-// workerPhase derives a pod-like phase string from a substrate Worker.
-// A worker hosting an actor is "Running"; an idle worker is "Idle".
-// The UI's badgeFor() treats "running" as green; "idle" falls through
-// to the neutral badge, which is the right visual treatment.
-func workerPhase(w *ateapipb.Worker) string {
-	if w.GetActorId() != "" {
-		return "Running"
-	}
-	return "Idle"
-}
 
 // listActorNames returns current actor IDs in the namespace via
 // ateapi. Replaces the prior kubectl-shellout fallback chain.
@@ -359,39 +349,11 @@ func handleHealthz(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
-// handlePods returns worker-shaped JSON sourced from ateapi.ListWorkers.
-// The JSON shape mirrors the original kubectl-shellout contract so
-// index.html doesn't need to change.
-func handlePods(w http.ResponseWriter, r *http.Request) {
-	if ateClient == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "ateapi client not initialized"})
-		return
-	}
-	ctx, cancel := context.WithTimeout(r.Context(), rpcTimeout)
-	defer cancel()
-	resp, err := ateClient.ListWorkers(ctx, &ateapipb.ListWorkersRequest{})
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "ListWorkers: " + err.Error()})
-		return
-	}
-	pods := make([]podSummary, 0, len(resp.GetWorkers()))
-	for _, wk := range resp.GetWorkers() {
-		// Filter to the demo namespace when set — workers may live
-		// in their own pool namespace (worker_namespace) so we
-		// compare against actor_namespace too.
-		if namespace != "" && wk.GetActorNamespace() != "" && wk.GetActorNamespace() != namespace {
-			continue
-		}
-		pods = append(pods, podSummary{
-			Name:      wk.GetWorkerPod(),
-			Node:      wk.GetWorkerPool(), // closest semantic analog
-			Phase:     workerPhase(wk),
-			Ready:     wk.GetActorId() != "",
-			StartedAt: "", // not exposed by ateapi today
-		})
-	}
-	sort.Slice(pods, func(i, j int) bool { return pods[i].Name < pods[j].Name })
-	writeJSON(w, http.StatusOK, map[string][]podSummary{"pods": pods})
+// handlePods returns a JSON pod list. Worker pods are now tracked locally by
+// each atelet and not exposed via the central apiserver, so this always
+// returns an empty list to keep the UI contract intact.
+func handlePods(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, map[string][]podSummary{"pods": {}})
 }
 
 // handleActors returns actor-shaped JSON sourced from ateapi.ListActors.

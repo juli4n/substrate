@@ -72,7 +72,7 @@ spec:
         securityContext:
           privileged: true
         env:
-        - name: MY_NODE_NAME
+        - name: NODE_NAME
           valueFrom:
             fieldRef:
               fieldPath: spec.nodeName
@@ -91,8 +91,14 @@ spec:
         volumeMounts:
         - name: run-ateom
           mountPath: /run/ateom-gvisor
+        - name: atelet-state
+          mountPath: /var/lib/atelet
       volumes:
       - name: run-ateom
         hostPath:
           path: /run/ateom-gvisor
+          type: DirectoryOrCreate
+      - name: atelet-state
+        hostPath:
+          path: /var/lib/atelet
           type: DirectoryOrCreate

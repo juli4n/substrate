@@ -54,21 +54,6 @@ type Interface interface {
 	// Lists all known actors. Returns nil if none found.
 	ListActors(ctx context.Context) ([]*ateapipb.Actor, error)
 
-	// Fetches worker state by namespace, pool, and pod name. Returns ErrNotFound if missing.
-	GetWorker(ctx context.Context, namespace, pool, pod string) (*ateapipb.Worker, error)
-
-	// Registers a new idle worker. Returns ErrAlreadyExists if already registered.
-	CreateWorker(ctx context.Context, worker *ateapipb.Worker) error
-
-	// Updates worker state with optimistic concurrency check. Returns ErrNotFound if missing, or ErrPersistenceRetry on version mismatch.
-	UpdateWorker(ctx context.Context, worker *ateapipb.Worker, expectedVersion int64) error
-
-	// Removes a worker. Idempotent: does nothing if worker is not found.
-	DeleteWorker(ctx context.Context, namespace, pool, pod string) error
-
-	// Lists all known workers. Returns nil if none found.
-	ListWorkers(ctx context.Context) ([]*ateapipb.Worker, error)
-
 	// AcquireLock attempts to acquire a distributed lock with a TTL.
 	// Returns true if the lock was successfully acquired.
 	// Returns false if the lock is already held by another client (conflict).

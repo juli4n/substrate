@@ -140,7 +140,7 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// FakeAteletServer implements ateletpb.WorkersServer
+// FakeAteletServer implements ateletpb.AteomHerderServer for tests.
 type FakeAteletServer struct {
 	ateletpb.UnimplementedAteomHerderServer
 
@@ -153,6 +153,11 @@ type FakeAteletServer struct {
 	RestoreCalled bool
 	FailRestore   error
 	RestoreDelay  time.Duration
+
+	// Pod info returned by Run and Restore.
+	ReturnPodNamespace string
+	ReturnPodName      string
+	ReturnPodIP        string
 }
 
 func (f *FakeAteletServer) Reset() {
@@ -160,24 +165,37 @@ func (f *FakeAteletServer) Reset() {
 	defer f.Lock.Unlock()
 
 	f.RunCalled = false
-
 	f.CheckpointCalled = false
-
 	f.RestoreCalled = false
 	f.FailRestore = nil
 	f.RestoreDelay = 0
+	f.ReturnPodNamespace = ""
+	f.ReturnPodName = ""
+	f.ReturnPodIP = ""
 }
 
-func (f *FakeAteletServer) Run(ctx context.Context, req *ateletpb.RunRequest) (*ateletpb.RunResponse, error) {
+func (f *FakeAteletServer) WatchCapacity(_ *ateletpb.WatchCapacityRequest, stream ateletpb.AteomHerder_WatchCapacityServer) error {
+	// Send an empty snapshot and then block until the stream is closed.
+	// Tests inject capacity directly via CapacityManager.ForceCapacity.
+	stream.Send(&ateletpb.CapacitySnapshot{}) //nolint:errcheck
+	<-stream.Context().Done()
+	return stream.Context().Err()
+}
+
+func (f *FakeAteletServer) Run(_ context.Context, _ *ateletpb.RunRequest) (*ateletpb.RunResponse, error) {
 	f.Lock.Lock()
 	defer f.Lock.Unlock()
 
 	f.RunCalled = true
 
-	return &ateletpb.RunResponse{}, nil
+	return &ateletpb.RunResponse{
+		WorkerPodNamespace: f.ReturnPodNamespace,
+		WorkerPodName:      f.ReturnPodName,
+		WorkerPodIp:        f.ReturnPodIP,
+	}, nil
 }
 
-func (f *FakeAteletServer) Checkpoint(ctx context.Context, req *ateletpb.CheckpointRequest) (*ateletpb.CheckpointResponse, error) {
+func (f *FakeAteletServer) Checkpoint(_ context.Context, _ *ateletpb.CheckpointRequest) (*ateletpb.CheckpointResponse, error) {
 	f.Lock.Lock()
 	defer f.Lock.Unlock()
 
@@ -186,7 +204,7 @@ func (f *FakeAteletServer) Checkpoint(ctx context.Context, req *ateletpb.Checkpo
 	return &ateletpb.CheckpointResponse{}, nil
 }
 
-func (f *FakeAteletServer) Restore(ctx context.Context, req *ateletpb.RestoreRequest) (*ateletpb.RestoreResponse, error) {
+func (f *FakeAteletServer) Restore(_ context.Context, _ *ateletpb.RestoreRequest) (*ateletpb.RestoreResponse, error) {
 	f.Lock.Lock()
 	defer f.Lock.Unlock()
 
@@ -197,7 +215,11 @@ func (f *FakeAteletServer) Restore(ctx context.Context, req *ateletpb.RestoreReq
 	if f.FailRestore != nil {
 		return nil, f.FailRestore
 	}
-	return &ateletpb.RestoreResponse{}, nil
+	return &ateletpb.RestoreResponse{
+		WorkerPodNamespace: f.ReturnPodNamespace,
+		WorkerPodName:      f.ReturnPodName,
+		WorkerPodIp:        f.ReturnPodIP,
+	}, nil
 }
 
 type testContext struct {
@@ -207,6 +229,7 @@ type testContext struct {
 	k8sClient           kubernetes.Interface
 	substrateClient     versioned.Interface
 	persistence         *ateredis.Persistence
+	ateletManager       *AteletManager
 	fakeAtelet          *FakeAteletServer
 	cleanup             func()
 	actorTemplateLister listersv1alpha1.ActorTemplateLister
@@ -239,29 +262,22 @@ func setupTest(t *testing.T, ns string) *testContext {
 		t.Fatalf("failed to create substrate clientset: %v", err)
 	}
 
-	// 3. Initialize Informers
-	workerFactory, workerInformer := WorkerPodInformer(k8sClient)
+	// 3. Initialize Informers (atelet only; workers are tracked by atelet, not apiserver)
 	ateletFactory, ateletInformer := AteletInformer(k8sClient)
-
 	substrateInformerFactory := externalversions.NewSharedInformerFactory(substrateClient, 0)
 	actorTemplateLister := substrateInformerFactory.Api().V1alpha1().ActorTemplates().Lister()
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	syncer := NewWorkerPoolSyncer(persistence, workerInformer)
-	syncer.Start(ctx)
-
-	workerFactory.Start(ctx.Done())
 	ateletFactory.Start(ctx.Done())
 	substrateInformerFactory.Start(ctx.Done())
 
-	workerFactory.WaitForCacheSync(ctx.Done())
 	ateletFactory.WaitForCacheSync(ctx.Done())
 	substrateInformerFactory.WaitForCacheSync(ctx.Done())
 
-	// 4. Initialize Service
-	dialer := NewAteletDialer(workerInformer.GetIndexer(), ateletInformer.GetIndexer())
-	service := NewService(persistence, actorTemplateLister, dialer)
+	// 4. Initialize Service with AteletManager
+	ateletManager := NewAteletManager(ctx, ateletInformer)
+	service := NewService(persistence, actorTemplateLister, ateletManager)
 
 	// 5. Start REAL gRPC Server for ATE API
 	grpcServer := grpc.NewServer(grpc.UnaryInterceptor(ateinterceptors.ServerUnaryInterceptor))
@@ -319,6 +335,7 @@ func setupTest(t *testing.T, ns string) *testContext {
 		k8sClient:           k8sClient,
 		substrateClient:     substrateClient,
 		persistence:         persistence,
+		ateletManager:       ateletManager,
 		fakeAtelet:          fakeAtelet,
 		cleanup:             cleanup,
 		actorTemplateLister: actorTemplateLister,
@@ -384,82 +401,13 @@ func createTemplate(t *testing.T, tc *testContext, ns string) {
 	}
 }
 
-func createWorkerPod(t *testing.T, tc *testContext, ns string, name string, nodeName string) {
-	t.Helper()
-	pod := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: ns,
-			Labels: map[string]string{
-				"ate.dev/worker-pool": "pool1",
-			},
-		},
-		Spec: corev1.PodSpec{
-			NodeName: nodeName,
-			Containers: []corev1.Container{
-				{Name: "main", Image: "nginx"},
-			},
-		},
-	}
-	createdPod, err := tc.k8sClient.CoreV1().Pods(ns).Create(context.Background(), pod, metav1.CreateOptions{})
-	if err != nil {
-		t.Fatalf("failed to create worker pod: %v", err)
-	}
-	createdPod.Status.PodIPs = []corev1.PodIP{{IP: "127.0.0.1"}}
-	createdPod.Status.Phase = corev1.PodRunning
-	_, err = tc.k8sClient.CoreV1().Pods(ns).UpdateStatus(context.Background(), createdPod, metav1.UpdateOptions{})
-	if err != nil {
-		t.Fatalf("failed to update worker pod status: %v", err)
-	}
-
-	// Wait for worker to be registered via API
-	err = wait.PollUntilContextTimeout(context.Background(), 100*time.Millisecond, 5*time.Second, true, func(ctx context.Context) (bool, error) {
-		resp, err := tc.client.ListWorkers(ctx, &ateapipb.ListWorkersRequest{})
-		if err != nil {
-			return false, nil // Retry on API error
-		}
-		for _, w := range resp.GetWorkers() {
-			if w.GetWorkerNamespace() == ns && w.GetWorkerPod() == name {
-				return true, nil
-			}
-		}
-		return false, nil
-	})
-	if err != nil {
-		t.Fatalf("failed to wait for worker to be registered: %v", err)
-	}
-}
-
-func deleteWorkerPod(t *testing.T, tc *testContext, ns string, name string) {
-	t.Helper()
-	err := tc.k8sClient.CoreV1().Pods(ns).Delete(context.Background(), name, metav1.DeleteOptions{})
-	if err != nil {
-		t.Fatalf("failed to delete worker pod %s: %v", name, err)
-	}
-
-	// Wait for worker to be removed from API
-	err = wait.PollUntilContextTimeout(context.Background(), 100*time.Millisecond, 5*time.Second, true, func(ctx context.Context) (bool, error) {
-		resp, err := tc.client.ListWorkers(ctx, &ateapipb.ListWorkersRequest{})
-		if err != nil {
-			return false, nil // Retry on API error
-		}
-		for _, w := range resp.GetWorkers() {
-			if w.GetWorkerNamespace() == ns && w.GetWorkerPod() == name {
-				return false, nil // Still there
-			}
-		}
-		return true, nil // Gone!
-	})
-	if err != nil {
-		t.Fatalf("failed to wait for worker to be removed: %v", err)
-	}
+// setNodeCapacity injects free worker capacity for a node/pool directly into the CapacityManager.
+// This replaces the old createWorkerPod helper, since worker pods are now tracked by atelet, not apiserver.
+func setNodeCapacity(tc *testContext, nodeName, poolNs, poolName string, count int) {
+	tc.ateletManager.ForceCapacity(nodeName, poolNs, poolName, count)
 }
 
 // TestCreateActor_Success tests the happy path for creating an actor.
-// Workflow:
-// 1. Creates a mock ActorTemplate in the test namespace.
-// 2. Calls CreateActor RPC.
-// 3. Verifies that the actor is successfully created and returned in the response with a generated ID.
 func TestCreateActor_Success(t *testing.T) {
 	ns := namespaceForTest("ns-create-success")
 	tc := setupTest(t, ns)
@@ -566,9 +514,6 @@ func TestGetActor_Found(t *testing.T) {
 }
 
 // TestGetActor_NotFound tests that retrieving a non-existent actor fails.
-// Workflow:
-// 1. Calls GetActor RPC with a non-existent ID.
-// 2. Verifies that it returns an error (NotFound).
 func TestGetActor_NotFound(t *testing.T) {
 	ns := namespaceForTest("ns-get-notfound")
 	tc := setupTest(t, ns)
@@ -581,11 +526,6 @@ func TestGetActor_NotFound(t *testing.T) {
 }
 
 // TestListActors tests that all created actors can be listed.
-// Workflow:
-// 1. Creates a mock ActorTemplate.
-// 2. Calls CreateActor twice to create two actors.
-// 3. Calls ListActors RPC.
-// 4. Verifies that both actors are returned in the list.
 func TestListActors(t *testing.T) {
 	ns := namespaceForTest("ns-list-actors")
 	tc := setupTest(t, ns)
@@ -636,64 +576,18 @@ func TestListActors(t *testing.T) {
 	}
 }
 
-// TestListWorkers tests that workers mirrored to Redis are listed.
-// Workflow:
-// 1. Creates a mock worker Pod in Kubernetes.
-// 2. Waits for the background WorkerPoolSyncer to mirror it to Redis.
-// 3. Calls ListWorkers RPC.
-// 4. Verifies that the worker appears in the response.
-func TestListWorkers(t *testing.T) {
-	ns := namespaceForTest("ns-list-workers")
-	tc := setupTest(t, ns)
-	defer tc.cleanup()
-
-	createWorkerPod(t, tc, ns, "worker-1", "")
-
-	listResp, err := tc.client.ListWorkers(context.Background(), &ateapipb.ListWorkersRequest{})
-	if err != nil {
-		t.Fatalf("ListWorkers failed: %v", err)
-	}
-
-	var filteredWorkers []*ateapipb.Worker
-	for _, w := range listResp.GetWorkers() {
-		if w.GetWorkerNamespace() == ns {
-			filteredWorkers = append(filteredWorkers, w)
-		}
-	}
-
-	want := []*ateapipb.Worker{
-		{
-			WorkerNamespace: ns,
-			WorkerPool:      "pool1",
-			WorkerPod:       "worker-1",
-			Ip:              "127.0.0.1",
-			Version:         1,
-		},
-	}
-
-	if diff := cmp.Diff(want, filteredWorkers, protocmp.Transform()); diff != "" {
-		t.Errorf("ListWorkers response mismatch (-want +got):\n%s", diff)
-	}
-}
-
-// TestResumeActor tests the full workflow of resuming a suspended actor.
-// Workflow:
-// 1. Creates a mock ActorTemplate.
-// 2. Creates a mock Atelet Pod in 'ate-system' namespace on 'node1'.
-// 3. Creates a mock worker Pod in the test namespace on 'node1'.
-// 4. Waits for the WorkerPoolSyncer to mirror the worker to Redis.
-// 5. Creates an actor (starts as SUSPENDED).
-// 6. Calls ResumeActor RPC.
-// 7. Verifies that the fake Atelet received the Restore call.
-// 8. Verifies that the actor status is updated to RUNNING.
+// TestResumeActor tests the happy path for resuming a suspended actor.
 func TestResumeActor(t *testing.T) {
 	ns := namespaceForTest("ns-resume")
 	tc := setupTest(t, ns)
 	defer tc.cleanup()
 
 	createTemplate(t, tc, ns)
+	setNodeCapacity(tc, "node1", ns, "pool1", 10)
 
-	createWorkerPod(t, tc, ns, "worker-1", "node1")
+	tc.fakeAtelet.ReturnPodNamespace = ns
+	tc.fakeAtelet.ReturnPodName = "worker-1"
+	tc.fakeAtelet.ReturnPodIP = "127.0.0.1"
 
 	_, err := tc.client.CreateActor(context.Background(), &ateapipb.CreateActorRequest{
 		ActorTemplateNamespace: ns,
@@ -728,6 +622,7 @@ func TestResumeActor(t *testing.T) {
 			ActorTemplateNamespace: ns,
 			ActorTemplateName:      "tmpl1",
 			Status:                 ateapipb.Actor_STATUS_RUNNING,
+			LastNodeName:           "node1",
 			AteomPodNamespace:      ns,
 			AteomPodName:           "worker-1",
 			AteomPodIp:             "127.0.0.1",
@@ -736,50 +631,9 @@ func TestResumeActor(t *testing.T) {
 	if diff := cmp.Diff(want, getResp, protocmp.Transform(), protocmp.IgnoreFields(&ateapipb.Actor{}, "version")); diff != "" {
 		t.Errorf("GetActor response mismatch (-want +got):\n%s", diff)
 	}
-
-	// Verify that the worker record also has the assigned actor details
-	listWorkersResp, err := tc.client.ListWorkers(context.Background(), &ateapipb.ListWorkersRequest{})
-	if err != nil {
-		t.Fatalf("ListWorkers failed: %v", err)
-	}
-	var actorWorker *ateapipb.Worker
-	for _, w := range listWorkersResp.GetWorkers() {
-		if w.GetWorkerNamespace() == ns && w.GetWorkerPod() == "worker-1" {
-			actorWorker = w
-			break
-		}
-	}
-	if actorWorker == nil {
-		t.Fatalf("expected worker-1 in namespace %s not found in ListWorkers", ns)
-	}
-
-	wantWorker := &ateapipb.Worker{
-		WorkerNamespace: ns,
-		WorkerPool:      "pool1",
-		WorkerPod:       "worker-1",
-		ActorNamespace:  ns,
-		ActorTemplate:   "tmpl1",
-		ActorId:         id,
-		Ip:              "127.0.0.1",
-	}
-
-	if diff := cmp.Diff(wantWorker, actorWorker, protocmp.Transform(), protocmp.IgnoreFields(&ateapipb.Worker{}, "version")); diff != "" {
-		t.Errorf("Worker state mismatch (-want +got):\n%s", diff)
-	}
 }
 
-// TestResumeActor_NoWorkers tests that resuming an actor fails when no free workers are available.
-// Workflow:
-// 1. Creates a mock ActorTemplate.
-// 2. Creates an actor.
-// 3. Calls ResumeActor RPC without creating any workers.
-// 4. Verifies that ResumeActor fails with FailedPrecondition status.
-// TestResumeActor_NoWorkers tests that resuming an actor fails when no free workers are available.
-// Workflow:
-// 1. Creates a mock ActorTemplate.
-// 2. Creates an actor.
-// 3. Calls ResumeActor RPC without creating any workers.
-// 4. Verifies that ResumeActor fails with FailedPrecondition status.
+// TestResumeActor_NoWorkers tests that resuming fails when no capacity is available.
 func TestResumeActor_NoWorkers(t *testing.T) {
 	ns := namespaceForTest("ns-resume-no-workers")
 	tc := setupTest(t, ns)
@@ -801,28 +655,18 @@ func TestResumeActor_NoWorkers(t *testing.T) {
 	_, err = tc.client.ResumeActor(context.Background(), &ateapipb.ResumeActorRequest{
 		ActorId: id,
 	})
-	assertGrpcError(t, err, codes.FailedPrecondition, "no free workers available")
+	assertGrpcError(t, err, codes.ResourceExhausted, fmt.Sprintf("no atelets with free capacity for pool %s/pool1", ns))
 }
 
-// TestResumeActor_Reentrancy tests the failure recovery and re-entrancy of ResumeActor.
-// Workflow:
-// 1. Creates a mock ActorTemplate.
-// 2. Creates a mock Atelet Pod and a mock Worker Pod.
-// 3. Waits for the WorkerPoolSyncer to mirror the worker to store.
-// 4. Creates an actor in SUSPENDED state.
-// 5. Configures fake Atelet to FAIL on Restore.
-// 6. Calls ResumeActor and verifies it fails, but actor status becomes RESUMING.
-// 7. Configures fake Atelet to SUCCEED on Restore.
-// 8. Calls ResumeActor again and verifies it succeeds and actor status becomes RUNNING.
+// TestResumeActor_Reentrancy tests that if Restore fails (actor stuck in RESUMING),
+// a subsequent ResumeActor call retries and succeeds.
 func TestResumeActor_Reentrancy(t *testing.T) {
 	ns := namespaceForTest("ns-resume-reentrancy")
 	tc := setupTest(t, ns)
 	defer tc.cleanup()
 
 	createTemplate(t, tc, ns)
-
-	// Create Worker Pod
-	createWorkerPod(t, tc, ns, "worker-1", "node1")
+	setNodeCapacity(tc, "node1", ns, "pool1", 10)
 
 	_, err := tc.client.CreateActor(context.Background(), &ateapipb.CreateActorRequest{
 		ActorTemplateNamespace: ns,
@@ -834,7 +678,7 @@ func TestResumeActor_Reentrancy(t *testing.T) {
 	}
 	id := "id1"
 
-	// STEP 1: Make Atelet FAIL on Restore!
+	// STEP 1: Make Atelet FAIL on Restore.
 	tc.fakeAtelet.FailRestore = fmt.Errorf("mock atelet failure")
 
 	_, err = tc.client.ResumeActor(context.Background(), &ateapipb.ResumeActorRequest{
@@ -844,7 +688,7 @@ func TestResumeActor_Reentrancy(t *testing.T) {
 		t.Fatalf("expected ResumeActor to fail due to atelet error")
 	}
 
-	// Verify actor state is RESUMING in Redis!
+	// Verify actor state is RESUMING in Redis.
 	actor, err := tc.persistence.GetActor(context.Background(), id)
 	if err != nil {
 		t.Fatalf("failed to get actor from store: %v", err)
@@ -852,10 +696,13 @@ func TestResumeActor_Reentrancy(t *testing.T) {
 	if actor.GetStatus() != ateapipb.Actor_STATUS_RESUMING {
 		t.Errorf("expected status RESUMING, got %v", actor.GetStatus())
 	}
+	if actor.GetLastNodeName() != "node1" {
+		t.Errorf("expected LastNodeName node1, got %v", actor.GetLastNodeName())
+	}
 
-	// STEP 2: Make Atelet SUCCEED!
+	// STEP 2: Make Atelet SUCCEED.
 	tc.fakeAtelet.FailRestore = nil
-	tc.fakeAtelet.RestoreCalled = false // reset for verification
+	tc.fakeAtelet.RestoreCalled = false
 
 	_, err = tc.client.ResumeActor(context.Background(), &ateapipb.ResumeActorRequest{
 		ActorId: id,
@@ -868,7 +715,7 @@ func TestResumeActor_Reentrancy(t *testing.T) {
 		t.Errorf("expected Restore to be called on retry")
 	}
 
-	// Verify actor state is RUNNING!
+	// Verify actor state is RUNNING.
 	actor, err = tc.persistence.GetActor(context.Background(), id)
 	if err != nil {
 		t.Fatalf("failed to get actor from store: %v", err)
@@ -879,23 +726,17 @@ func TestResumeActor_Reentrancy(t *testing.T) {
 }
 
 // TestSuspendActor tests the full workflow of suspending a running actor.
-// Workflow:
-// 1. Creates a mock ActorTemplate.
-// 2. Creates a mock Atelet Pod on 'node1'.
-// 3. Creates a mock worker Pod on 'node1'.
-// 4. Waits for the WorkerPoolSyncer to mirror the worker to Redis.
-// 5. Creates an actor.
-// 6. Calls ResumeActor to transition it to RUNNING.
-// 7. Calls SuspendActor RPC.
-// 8. Verifies that the fake Atelet received the Suspend call.
 func TestSuspendActor(t *testing.T) {
 	ns := namespaceForTest("ns-suspend")
 	tc := setupTest(t, ns)
 	defer tc.cleanup()
 
 	createTemplate(t, tc, ns)
+	setNodeCapacity(tc, "node1", ns, "pool1", 10)
 
-	createWorkerPod(t, tc, ns, "worker-1", "node1")
+	tc.fakeAtelet.ReturnPodNamespace = ns
+	tc.fakeAtelet.ReturnPodName = "worker-1"
+	tc.fakeAtelet.ReturnPodIP = "127.0.0.1"
 
 	_, err := tc.client.CreateActor(context.Background(), &ateapipb.CreateActorRequest{
 		ActorTemplateNamespace: ns,
@@ -907,7 +748,7 @@ func TestSuspendActor(t *testing.T) {
 	}
 	id := "id1"
 
-	// Resume first to make it running
+	// Resume first to make it running.
 	_, err = tc.client.ResumeActor(context.Background(), &ateapipb.ResumeActorRequest{
 		ActorId: id,
 	})
@@ -915,7 +756,7 @@ func TestSuspendActor(t *testing.T) {
 		t.Fatalf("ResumeActor failed: %v", err)
 	}
 
-	// Suspend
+	// Suspend.
 	_, err = tc.client.SuspendActor(context.Background(), &ateapipb.SuspendActorRequest{
 		ActorId: id,
 	})
@@ -939,21 +780,16 @@ func TestSuspendActor(t *testing.T) {
 			ActorTemplateNamespace: ns,
 			ActorTemplateName:      "tmpl1",
 			Status:                 ateapipb.Actor_STATUS_SUSPENDED,
-			LastSnapshot:           fmt.Sprintf("gs://my-bucket/%s/tmpl1/%s/", ns, id),
+			LastNodeName:           "node1",
 		},
 	}
 
-	if diff := cmp.Diff(want, getResp, protocmp.Transform(), protocmp.IgnoreFields(&ateapipb.Actor{}, "version"), protocmp.IgnoreFields(&ateapipb.Actor{}, "last_snapshot")); diff != "" {
+	if diff := cmp.Diff(want, getResp, protocmp.Transform(), protocmp.IgnoreFields(&ateapipb.Actor{}, "version", "last_snapshot")); diff != "" {
 		t.Errorf("GetActor response mismatch (-want +got):\n%s", diff)
 	}
-
 }
 
 // TestValidation tests the negative validation cases for all gRPC methods.
-// Workflow:
-// 1. Uses table-driven tests for each RPC method (CreateActor, GetActor, ResumeActor, SuspendActor).
-// 2. Passes invalid requests (missing required fields).
-// 3. Verifies that all requests fail with an error.
 func TestValidation(t *testing.T) {
 	ns := namespaceForTest("ns-validation")
 	tc := setupTest(t, ns)
@@ -1052,8 +888,7 @@ func TestResumeActor_LockConflict(t *testing.T) {
 	defer tc.cleanup()
 
 	createTemplate(t, tc, ns)
-
-	createWorkerPod(t, tc, ns, "worker-1", "node1")
+	setNodeCapacity(tc, "node1", ns, "pool1", 10)
 
 	_, err := tc.client.CreateActor(context.Background(), &ateapipb.CreateActorRequest{
 		ActorTemplateNamespace: ns,
@@ -1065,10 +900,10 @@ func TestResumeActor_LockConflict(t *testing.T) {
 	}
 	id := "id1"
 
-	// Set a delay on the fake Atelet to hold the lock
+	// Set a delay on the fake Atelet to hold the lock.
 	tc.fakeAtelet.RestoreDelay = 1 * time.Second
 
-	// Launch Request A in a goroutine
+	// Launch Request A in a goroutine.
 	errChan := make(chan error, 1)
 	go func() {
 		_, err := tc.client.ResumeActor(context.Background(), &ateapipb.ResumeActorRequest{
@@ -1077,30 +912,30 @@ func TestResumeActor_LockConflict(t *testing.T) {
 		errChan <- err
 	}()
 
-	// Sleep a bit to ensure Request A acquired the lock
+	// Sleep a bit to ensure Request A acquired the lock.
 	time.Sleep(200 * time.Millisecond)
 
-	// Launch Request B (should fail due to lock conflict)
+	// Launch Request B (should fail due to lock conflict).
 	_, err = tc.client.ResumeActor(context.Background(), &ateapipb.ResumeActorRequest{
 		ActorId: id,
 	})
 	assertGrpcError(t, err, codes.Aborted, "another operation is in progress for this actor")
 
-	// Wait for Request A to finish
+	// Wait for Request A to finish.
 	if errA := <-errChan; errA != nil {
 		t.Fatalf("Request A failed: %v", errA)
 	}
 }
 
-func TestResumeActor_DanglingWorker(t *testing.T) {
-	ns := namespaceForTest("ns-resume-dangling")
+// TestResumeActor_DeclareIntent tests that when ResumeActor crashes mid-flight
+// (actor stuck in RESUMING), a retry successfully recovers.
+func TestResumeActor_DeclareIntent(t *testing.T) {
+	ns := namespaceForTest("ns-resume-intent")
 	tc := setupTest(t, ns)
 	defer tc.cleanup()
 
 	createTemplate(t, tc, ns)
-
-	// 1. Create Worker Pod A
-	createWorkerPod(t, tc, ns, "worker-a", "node1")
+	setNodeCapacity(tc, "node1", ns, "pool1", 10)
 
 	_, err := tc.client.CreateActor(context.Background(), &ateapipb.CreateActorRequest{
 		ActorTemplateNamespace: ns,
@@ -1112,122 +947,48 @@ func TestResumeActor_DanglingWorker(t *testing.T) {
 	}
 	id := "id1"
 
-	// 2. Configure fake Atelet to FAIL on Restore!
-	tc.fakeAtelet.FailRestore = fmt.Errorf("mock atelet failure")
+	// Simulate crash: fail the Restore call so actor is left in RESUMING.
+	tc.fakeAtelet.FailRestore = fmt.Errorf("simulated crash")
 
-	// 3. Call ResumeActor -> Expect failure
 	_, err = tc.client.ResumeActor(context.Background(), &ateapipb.ResumeActorRequest{
 		ActorId: id,
 	})
 	if err == nil {
-		t.Fatalf("expected ResumeActor to fail due to atelet error")
+		t.Fatalf("expected ResumeActor to fail")
 	}
 
-	// Verify actor state is RESUMING with worker A assigned
-	getResp, err := tc.client.GetActor(context.Background(), &ateapipb.GetActorRequest{
-		ActorId: id,
-	})
+	// Verify actor has RESUMING + declared intent node.
+	actor, err := tc.persistence.GetActor(context.Background(), id)
 	if err != nil {
-		t.Fatalf("GetActor failed: %v", err)
+		t.Fatalf("failed to get actor: %v", err)
 	}
-	actor := getResp.GetActor()
 	if actor.GetStatus() != ateapipb.Actor_STATUS_RESUMING {
-		t.Fatalf("expected status RESUMING, got %v", actor.GetStatus())
+		t.Fatalf("expected RESUMING, got %v", actor.GetStatus())
 	}
-	if actor.GetAteomPodName() != "worker-a" {
-		t.Fatalf("expected worker-a assigned, got %v", actor.GetAteomPodName())
+	if actor.GetLastNodeName() != "node1" {
+		t.Fatalf("expected LastNodeName=node1, got %v", actor.GetLastNodeName())
 	}
 
-	deleteWorkerPod(t, tc, ns, "worker-a")
-
-	// 6. Create Worker Pod B
-	createWorkerPod(t, tc, ns, "worker-b", "node1")
-
-	// 7. Configure fake Atelet to SUCCEED on Restore
+	// Fix the atelet and retry — should succeed idempotently.
 	tc.fakeAtelet.FailRestore = nil
-	tc.fakeAtelet.RestoreCalled = false // reset
+	tc.fakeAtelet.RestoreCalled = false
 
-	// 8. Call ResumeActor again -> Expect success and picking Worker B!
 	_, err = tc.client.ResumeActor(context.Background(), &ateapipb.ResumeActorRequest{
 		ActorId: id,
 	})
 	if err != nil {
-		t.Fatalf("ResumeActor failed on retry: %v", err)
+		t.Fatalf("retry ResumeActor failed: %v", err)
 	}
-
 	if !tc.fakeAtelet.RestoreCalled {
 		t.Errorf("expected Restore to be called on retry")
 	}
 
-	// Verify actor state is RUNNING with worker B assigned
 	actor, err = tc.persistence.GetActor(context.Background(), id)
 	if err != nil {
-		t.Fatalf("failed to get actor from store: %v", err)
+		t.Fatalf("failed to get actor after retry: %v", err)
 	}
 	if actor.GetStatus() != ateapipb.Actor_STATUS_RUNNING {
-		t.Errorf("expected status RUNNING, got %v", actor.GetStatus())
-	}
-	if actor.GetAteomPodName() != "worker-b" {
-		t.Errorf("expected worker-b assigned, got %v", actor.GetAteomPodName())
-	}
-}
-
-func TestSuspendActor_DanglingWorker(t *testing.T) {
-	ns := namespaceForTest("ns-sd")
-	tc := setupTest(t, ns)
-	defer tc.cleanup()
-
-	createTemplate(t, tc, ns)
-
-	// 1. Create Worker Pod
-	createWorkerPod(t, tc, ns, "worker-1", "node1")
-
-	_, err := tc.client.CreateActor(context.Background(), &ateapipb.CreateActorRequest{
-		ActorTemplateNamespace: ns,
-		ActorTemplateName:      "tmpl1",
-		ActorId:                "id1",
-	})
-	if err != nil {
-		t.Fatalf("CreateActor failed: %v", err)
-	}
-	id := "id1"
-
-	// Resume first to make it running
-	_, err = tc.client.ResumeActor(context.Background(), &ateapipb.ResumeActorRequest{
-		ActorId: id,
-	})
-	if err != nil {
-		t.Fatalf("ResumeActor failed: %v", err)
-	}
-
-	deleteWorkerPod(t, tc, ns, "worker-1")
-
-	// 3. Call SuspendActor -> Should succeed (our fix skips missing pod execution)
-	actors, _ := tc.persistence.ListActors(context.Background())
-	t.Logf("Actors in Redis before Suspend: %d", len(actors))
-	for _, a := range actors {
-		t.Logf("  Actor: %s/%s/%s", a.GetActorTemplateNamespace(), a.GetActorTemplateName(), a.GetActorId())
-	}
-
-	_, err = tc.client.SuspendActor(context.Background(), &ateapipb.SuspendActorRequest{
-		ActorId: id,
-	})
-	if err != nil {
-		t.Fatalf("SuspendActor failed: %v", err)
-	}
-
-	// 4. Verify it becomes SUSPENDED in Redis
-	getResp, err := tc.client.GetActor(context.Background(), &ateapipb.GetActorRequest{
-		ActorId: id,
-	})
-	if err != nil {
-		t.Fatalf("GetActor failed: %v", err)
-	}
-	if getResp.GetActor().GetStatus() != ateapipb.Actor_STATUS_SUSPENDED {
-		t.Errorf("expected status SUSPENDED, got %v", getResp.GetActor().GetStatus())
-	}
-	if getResp.GetActor().GetAteomPodNamespace() != "" {
-		t.Errorf("expected ateom_pod_namespace to be empty, got %v", getResp.GetActor().GetAteomPodNamespace())
+		t.Errorf("expected RUNNING, got %v", actor.GetStatus())
 	}
 }
 
@@ -1266,7 +1027,7 @@ func TestDeleteActor_NotSuspended(t *testing.T) {
 	defer tc.cleanup()
 
 	createTemplate(t, tc, ns)
-	createWorkerPod(t, tc, ns, "worker-1", "node1")
+	setNodeCapacity(tc, "node1", ns, "pool1", 10)
 
 	_, err := tc.client.CreateActor(context.Background(), &ateapipb.CreateActorRequest{
 		ActorTemplateNamespace: ns,

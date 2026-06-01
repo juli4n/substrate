@@ -19,8 +19,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"math/rand"
-	"time"
 
 	"github.com/agent-substrate/substrate/cmd/ateapi/internal/store"
 	"github.com/agent-substrate/substrate/internal/proto/ateletpb"
@@ -29,7 +27,6 @@ import (
 	"github.com/agent-substrate/substrate/pkg/proto/ateapipb"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"k8s.io/apimachinery/pkg/util/wait"
 )
 
 // ResumeInput holds the immutable parameters requested by the client.
@@ -50,8 +47,7 @@ type LoadActorForResumeStep struct {
 }
 
 func (s *LoadActorForResumeStep) Name() string { return "LoadActorForResume" }
-func (s *LoadActorForResumeStep) IsComplete(ctx context.Context, input *ResumeInput, state *ResumeState) (bool, error) {
-	// Always run this step to get the latest state from the DB
+func (s *LoadActorForResumeStep) IsComplete(_ context.Context, _ *ResumeInput, _ *ResumeState) (bool, error) {
 	return false, nil
 }
 func (s *LoadActorForResumeStep) Execute(ctx context.Context, input *ResumeInput, state *ResumeState) error {
@@ -73,223 +69,189 @@ func (s *LoadActorForResumeStep) Execute(ctx context.Context, input *ResumeInput
 	return nil
 }
 
-func (s *LoadActorForResumeStep) RetryBackoff() *wait.Backoff { return nil }
 
-type AssignWorkerStep struct {
-	store store.Interface
+
+// PlaceAndRunStep picks an atelet with free capacity, declares intent by
+// writing RESUMING + last_node_name, calls Run or Restore (idempotent at
+// atelet), and on success writes the actor to RUNNING with the assigned pod
+// info. Retries against other atelets on RESOURCE_EXHAUSTED.
+type PlaceAndRunStep struct {
+	store         store.Interface
+	ateletManager *AteletManager
 }
 
-func (s *AssignWorkerStep) Name() string { return "AssignWorker" }
-
-func (s *AssignWorkerStep) IsComplete(ctx context.Context, input *ResumeInput, state *ResumeState) (bool, error) {
+func (s *PlaceAndRunStep) Name() string { return "PlaceAndRun" }
+func (s *PlaceAndRunStep) IsComplete(_ context.Context, _ *ResumeInput, state *ResumeState) (bool, error) {
 	return state.Actor.GetStatus() == ateapipb.Actor_STATUS_RUNNING, nil
 }
-func (s *AssignWorkerStep) Execute(ctx context.Context, input *ResumeInput, state *ResumeState) error {
-	workers, err := s.store.ListWorkers(ctx)
-	if err != nil {
-		return fmt.Errorf("while listing workers: %w", err)
+
+func (s *PlaceAndRunStep) Execute(ctx context.Context, input *ResumeInput, state *ResumeState) error {
+	poolNs := state.ActorTemplate.Spec.WorkerPoolRef.Namespace
+	poolName := state.ActorTemplate.Spec.WorkerPoolRef.Name
+
+	// Build the candidate list: declared-intent node first (crash recovery),
+	// then preferred last node, then any other node with free capacity.
+	var declared string
+	if state.Actor.GetStatus() == ateapipb.Actor_STATUS_RESUMING {
+		declared = state.Actor.GetLastNodeName()
+	}
+	candidates := s.ateletManager.CandidateNodes(poolNs, poolName, declared)
+	if len(candidates) == 0 {
+		return status.Errorf(codes.ResourceExhausted, "no atelets with free capacity for pool %s/%s", poolNs, poolName)
 	}
 
-	var assignedWorker *ateapipb.Worker
+	workloadSpec := buildWorkloadSpec(state.ActorTemplate)
+	runscCfg := buildRunscConfig(state.ActorTemplate)
 
-	// Check if we already have a worker assigned from a previous failed attempt
-	for _, worker := range workers {
-		if worker.GetActorId() == input.ActorID && worker.GetWorkerPool() == state.ActorTemplate.Spec.WorkerPoolRef.Name && worker.GetWorkerNamespace() == state.ActorTemplate.Spec.WorkerPoolRef.Namespace {
-			assignedWorker = worker
-			break
-		}
-	}
-
-	// If not, find a free one using randomized shuffling
-	if assignedWorker == nil {
-		pickedWorker := s.findFreeWorker(workers, state.ActorTemplate.Spec.WorkerPoolRef.Namespace, state.ActorTemplate.Spec.WorkerPoolRef.Name)
-		if pickedWorker == nil {
-			return status.Errorf(codes.FailedPrecondition, "no free workers available")
-		}
-
-		assignedWorker = pickedWorker
-		slog.InfoContext(ctx, "Picked worker", slog.Any("worker", pickedWorker.String()))
-	}
-
-	assignedWorker.ActorId = input.ActorID
-	assignedWorker.ActorNamespace = state.Actor.GetActorTemplateNamespace()
-	assignedWorker.ActorTemplate = state.Actor.GetActorTemplateName()
-
-	if err := s.store.UpdateWorker(ctx, assignedWorker, assignedWorker.Version); err != nil {
-		return err
-	}
-
-	state.Actor.Status = ateapipb.Actor_STATUS_RESUMING
-	state.Actor.AteomPodNamespace = assignedWorker.GetWorkerNamespace()
-	state.Actor.AteomPodName = assignedWorker.GetWorkerPod()
-	state.Actor.AteomPodIp = assignedWorker.GetIp()
-
-	if err := s.store.UpdateActor(ctx, state.Actor, state.Actor.GetVersion()); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (s *AssignWorkerStep) RetryBackoff() *wait.Backoff {
-	return &wait.Backoff{
-		Steps:    5,
-		Duration: 10 * time.Millisecond,
-		Factor:   2.0,
-		Jitter:   1.0,
-	}
-}
-
-func (s *AssignWorkerStep) findFreeWorker(workers []*ateapipb.Worker, workerPoolNamespace, workerPoolName string) *ateapipb.Worker {
-	var freeWorkers []*ateapipb.Worker
-	for _, worker := range workers {
-		if worker.GetActorId() == "" && worker.GetWorkerPool() == workerPoolName && worker.GetWorkerNamespace() == workerPoolNamespace {
-			freeWorkers = append(freeWorkers, worker)
-		}
-	}
-
-	if len(freeWorkers) > 0 {
-		rand.Shuffle(len(freeWorkers), func(i, j int) {
-			freeWorkers[i], freeWorkers[j] = freeWorkers[j], freeWorkers[i]
-		})
-		return freeWorkers[0]
-	}
-	return nil
-}
-
-type CallAteletRestoreStep struct {
-	dialer *AteletDialer
-}
-
-func (s *CallAteletRestoreStep) Name() string { return "CallAteletRestore" }
-func (s *CallAteletRestoreStep) IsComplete(ctx context.Context, input *ResumeInput, state *ResumeState) (bool, error) {
-	return state.Actor.GetStatus() == ateapipb.Actor_STATUS_RUNNING, nil
-}
-func (s *CallAteletRestoreStep) Execute(ctx context.Context, input *ResumeInput, state *ResumeState) error {
-	ateletConn, err := s.dialer.DialForWorker(state.Actor.GetAteomPodNamespace(), state.Actor.GetAteomPodName())
-	if err != nil {
-		return err
-	}
-	client := ateletpb.NewAteomHerderClient(ateletConn)
-
-	workloadSpec := &ateletpb.WorkloadSpec{
-		PauseImage: state.ActorTemplate.Spec.PauseImage,
-	}
-	for _, ctr := range state.ActorTemplate.Spec.Containers {
-		ateletCtr := &ateletpb.Container{
-			Name:    ctr.Name,
-			Image:   ctr.Image,
-			Command: ctr.Command,
-		}
-		for _, env := range ctr.Env {
-			ateletEnv := &ateletpb.EnvEntry{
-				Name:  env.Name,
-				Value: env.Value,
+	for _, nodeName := range candidates {
+		// Declare intent: write RESUMING with chosen node before calling atelet.
+		// This survives crashes — on retry we'll try the same node first.
+		if state.Actor.GetLastNodeName() != nodeName || state.Actor.GetStatus() != ateapipb.Actor_STATUS_RESUMING {
+			latest, err := s.store.GetActor(ctx, input.ActorID)
+			if err != nil {
+				return err
 			}
-			ateletCtr.Env = append(ateletCtr.Env, ateletEnv)
+			latest.Status = ateapipb.Actor_STATUS_RESUMING
+			latest.LastNodeName = nodeName
+			if err := s.store.UpdateActor(ctx, latest, latest.GetVersion()); err != nil {
+				return err
+			}
+			state.Actor = latest
 		}
-		workloadSpec.Containers = append(workloadSpec.Containers, ateletCtr)
+
+		conn, err := s.ateletManager.ConnForNode(nodeName)
+		if err != nil {
+			slog.WarnContext(ctx, "PlaceAndRun: could not dial atelet, trying next", slog.String("node", nodeName), slog.Any("err", err))
+			continue
+		}
+		client := ateletpb.NewAteomHerderClient(conn)
+
+		podNs, podName, podIP, err := s.callAtelet(ctx, client, input, state, poolNs, poolName, workloadSpec, runscCfg)
+		if err != nil {
+			if status.Code(err) == codes.ResourceExhausted {
+				slog.InfoContext(ctx, "PlaceAndRun: RESOURCE_EXHAUSTED, trying next node", slog.String("node", nodeName))
+				continue
+			}
+			return fmt.Errorf("atelet %s returned error: %w", nodeName, err)
+		}
+
+		// Success: write actor to RUNNING with the pod atelet assigned.
+		latest, err := s.store.GetActor(ctx, input.ActorID)
+		if err != nil {
+			return err
+		}
+		latest.Status = ateapipb.Actor_STATUS_RUNNING
+		latest.LastNodeName = nodeName
+		latest.AteomPodNamespace = podNs
+		latest.AteomPodName = podName
+		latest.AteomPodIp = podIP
+		if err := s.store.UpdateActor(ctx, latest, latest.GetVersion()); err != nil {
+			return err
+		}
+		state.Actor = latest
+		return nil
 	}
 
-	runscCfg := &ateletpb.RunscConfig{}
-	if state.ActorTemplate.Spec.Runsc.AMD64 != nil {
-		runscCfg.Amd64 = &ateletpb.RunscPlatformConfig{
-			Sha256Hash: state.ActorTemplate.Spec.Runsc.AMD64.SHA256Hash,
-			Url:        state.ActorTemplate.Spec.Runsc.AMD64.URL,
-		}
-	}
-	if state.ActorTemplate.Spec.Runsc.ARM64 != nil {
-		runscCfg.Arm64 = &ateletpb.RunscPlatformConfig{
-			Sha256Hash: state.ActorTemplate.Spec.Runsc.ARM64.SHA256Hash,
-			Url:        state.ActorTemplate.Spec.Runsc.ARM64.URL,
-		}
-	}
-	if state.ActorTemplate.Spec.Runsc.Authentication.GCP != nil {
-		authnCfg := &ateletpb.AuthenticationConfig{}
-		authnCfg.Gcp = &ateletpb.GCPAuthenticationConfig{Use: true}
-		runscCfg.Authentication = authnCfg
-	}
+	return status.Errorf(codes.ResourceExhausted, "all candidate atelets exhausted for pool %s/%s", poolNs, poolName)
+}
 
+func (s *PlaceAndRunStep) callAtelet(
+	ctx context.Context,
+	client ateletpb.AteomHerderClient,
+	input *ResumeInput,
+	state *ResumeState,
+	poolNs, poolName string,
+	workloadSpec *ateletpb.WorkloadSpec,
+	runscCfg *ateletpb.RunscConfig,
+) (podNs, podName, podIP string, err error) {
 	if state.Actor.LastSnapshot != "" {
-		slog.InfoContext(ctx, "Actor has snapshot; Restoring from snapshot")
-
-		req := &ateletpb.RestoreRequest{
-			TargetAteomNamespace:   state.Actor.GetAteomPodNamespace(),
-			TargetAteomName:        state.Actor.GetAteomPodName(),
+		slog.InfoContext(ctx, "Restoring actor from snapshot")
+		resp, err := client.Restore(ctx, &ateletpb.RestoreRequest{
 			ActorTemplateNamespace: state.Actor.GetActorTemplateNamespace(),
 			ActorTemplateName:      state.Actor.GetActorTemplateName(),
 			ActorId:                state.Actor.GetActorId(),
 			Runsc:                  runscCfg,
 			Spec:                   workloadSpec,
 			SnapshotUriPrefix:      state.Actor.GetLastSnapshot(),
-		}
-		_, err = client.Restore(ctx, req)
+			WorkerPoolNamespace:    poolNs,
+			WorkerPoolName:         poolName,
+		})
 		if err != nil {
-			return fmt.Errorf("while restoring workload: %w", err)
+			return "", "", "", err
 		}
-		return nil
-	} else if state.ActorTemplate.Status.GoldenSnapshot != "" && !input.Boot {
-		slog.InfoContext(ctx, "Actor has no snapshot; ActorTemplate has golden snapshot; Restoring from golden snapshot")
-
-		snapshot := state.ActorTemplate.Status.GoldenSnapshot
-
-		req := &ateletpb.RestoreRequest{
-			TargetAteomNamespace:   state.Actor.GetAteomPodNamespace(),
-			TargetAteomName:        state.Actor.GetAteomPodName(),
-			ActorTemplateNamespace: state.Actor.GetActorTemplateNamespace(),
-			ActorTemplateName:      state.Actor.GetActorTemplateName(),
-			ActorId:                state.Actor.GetActorId(),
-			Runsc:                  runscCfg,
-			Spec:                   workloadSpec,
-			SnapshotUriPrefix:      snapshot,
-		}
-		_, err = client.Restore(ctx, req)
-		if err != nil {
-			return fmt.Errorf("while creating workload from golden snapshot: %w", err)
-		}
-		return nil
-	} else {
-		slog.InfoContext(ctx, "Actor has no snapshot; ActorTemplate has no golden snapshot; Booting from ActorTemplate spec")
-		req := &ateletpb.RunRequest{
-			TargetAteomNamespace:   state.Actor.GetAteomPodNamespace(),
-			TargetAteomName:        state.Actor.GetAteomPodName(),
-			ActorTemplateNamespace: state.Actor.GetActorTemplateNamespace(),
-			ActorTemplateName:      state.Actor.GetActorTemplateName(),
-			ActorId:                state.Actor.GetActorId(),
-			Runsc:                  runscCfg,
-			Spec:                   workloadSpec,
-		}
-		_, err = client.Run(ctx, req)
-		if err != nil {
-			return fmt.Errorf("while creating workload from spec: %w", err)
-		}
-
-		return nil
+		return resp.GetWorkerPodNamespace(), resp.GetWorkerPodName(), resp.GetWorkerPodIp(), nil
 	}
-	// Unreachable
-}
 
-func (s *CallAteletRestoreStep) RetryBackoff() *wait.Backoff { return nil }
+	if state.ActorTemplate.Status.GoldenSnapshot != "" && !input.Boot {
+		slog.InfoContext(ctx, "Restoring actor from golden snapshot")
+		resp, err := client.Restore(ctx, &ateletpb.RestoreRequest{
+			ActorTemplateNamespace: state.Actor.GetActorTemplateNamespace(),
+			ActorTemplateName:      state.Actor.GetActorTemplateName(),
+			ActorId:                state.Actor.GetActorId(),
+			Runsc:                  runscCfg,
+			Spec:                   workloadSpec,
+			SnapshotUriPrefix:      state.ActorTemplate.Status.GoldenSnapshot,
+			WorkerPoolNamespace:    poolNs,
+			WorkerPoolName:         poolName,
+		})
+		if err != nil {
+			return "", "", "", err
+		}
+		return resp.GetWorkerPodNamespace(), resp.GetWorkerPodName(), resp.GetWorkerPodIp(), nil
+	}
 
-type FinalizeRunningStep struct {
-	store store.Interface
-}
-
-func (s *FinalizeRunningStep) Name() string { return "FinalizeRunning" }
-func (s *FinalizeRunningStep) IsComplete(ctx context.Context, input *ResumeInput, state *ResumeState) (bool, error) {
-	return state.Actor.GetStatus() == ateapipb.Actor_STATUS_RUNNING, nil
-}
-func (s *FinalizeRunningStep) Execute(ctx context.Context, input *ResumeInput, state *ResumeState) error {
-	latestActor, err := s.store.GetActor(ctx, input.ActorID)
+	slog.InfoContext(ctx, "Booting actor from scratch")
+	resp, err := client.Run(ctx, &ateletpb.RunRequest{
+		ActorTemplateNamespace: state.Actor.GetActorTemplateNamespace(),
+		ActorTemplateName:      state.Actor.GetActorTemplateName(),
+		ActorId:                state.Actor.GetActorId(),
+		Runsc:                  runscCfg,
+		Spec:                   workloadSpec,
+		WorkerPoolNamespace:    poolNs,
+		WorkerPoolName:         poolName,
+	})
 	if err != nil {
-		return err
+		return "", "", "", err
 	}
-
-	latestActor.Status = ateapipb.Actor_STATUS_RUNNING
-	err = s.store.UpdateActor(ctx, latestActor, latestActor.GetVersion())
-	if err == nil {
-		state.Actor = latestActor
-	}
-	return err
+	return resp.GetWorkerPodNamespace(), resp.GetWorkerPodName(), resp.GetWorkerPodIp(), nil
 }
 
-func (s *FinalizeRunningStep) RetryBackoff() *wait.Backoff { return nil }
+
+
+func buildWorkloadSpec(t *atev1alpha1.ActorTemplate) *ateletpb.WorkloadSpec {
+	spec := &ateletpb.WorkloadSpec{PauseImage: t.Spec.PauseImage}
+	for _, ctr := range t.Spec.Containers {
+		ac := &ateletpb.Container{
+			Name:    ctr.Name,
+			Image:   ctr.Image,
+			Command: ctr.Command,
+		}
+		for _, env := range ctr.Env {
+			ac.Env = append(ac.Env, &ateletpb.EnvEntry{Name: env.Name, Value: env.Value})
+		}
+		spec.Containers = append(spec.Containers, ac)
+	}
+	return spec
+}
+
+func buildRunscConfig(t *atev1alpha1.ActorTemplate) *ateletpb.RunscConfig {
+	cfg := &ateletpb.RunscConfig{}
+	if t.Spec.Runsc.AMD64 != nil {
+		cfg.Amd64 = &ateletpb.RunscPlatformConfig{
+			Sha256Hash: t.Spec.Runsc.AMD64.SHA256Hash,
+			Url:        t.Spec.Runsc.AMD64.URL,
+		}
+	}
+	if t.Spec.Runsc.ARM64 != nil {
+		cfg.Arm64 = &ateletpb.RunscPlatformConfig{
+			Sha256Hash: t.Spec.Runsc.ARM64.SHA256Hash,
+			Url:        t.Spec.Runsc.ARM64.URL,
+		}
+	}
+	if t.Spec.Runsc.Authentication.GCP != nil {
+		cfg.Authentication = &ateletpb.AuthenticationConfig{
+			Gcp: &ateletpb.GCPAuthenticationConfig{Use: true},
+		}
+	}
+	return cfg
+}

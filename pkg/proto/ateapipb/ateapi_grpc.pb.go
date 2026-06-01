@@ -40,7 +40,6 @@ const (
 	Control_SuspendActor_FullMethodName = "/ateapi.Control/SuspendActor"
 	Control_ResumeActor_FullMethodName  = "/ateapi.Control/ResumeActor"
 	Control_DeleteActor_FullMethodName  = "/ateapi.Control/DeleteActor"
-	Control_ListWorkers_FullMethodName  = "/ateapi.Control/ListWorkers"
 	Control_ListActors_FullMethodName   = "/ateapi.Control/ListActors"
 	Control_DebugClear_FullMethodName   = "/ateapi.Control/DebugClear"
 )
@@ -61,8 +60,6 @@ type ControlClient interface {
 	ResumeActor(ctx context.Context, in *ResumeActorRequest, opts ...grpc.CallOption) (*ResumeActorResponse, error)
 	// Delete an actor. Only suspended actors can be deleted.
 	DeleteActor(ctx context.Context, in *DeleteActorRequest, opts ...grpc.CallOption) (*DeleteActorResponse, error)
-	// List all workers currently reflected in redis.
-	ListWorkers(ctx context.Context, in *ListWorkersRequest, opts ...grpc.CallOption) (*ListWorkersResponse, error)
 	// List all actors currently reflected in redis.
 	ListActors(ctx context.Context, in *ListActorsRequest, opts ...grpc.CallOption) (*ListActorsResponse, error)
 	// Debugging: drop all data from the ate database.
@@ -127,16 +124,6 @@ func (c *controlClient) DeleteActor(ctx context.Context, in *DeleteActorRequest,
 	return out, nil
 }
 
-func (c *controlClient) ListWorkers(ctx context.Context, in *ListWorkersRequest, opts ...grpc.CallOption) (*ListWorkersResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ListWorkersResponse)
-	err := c.cc.Invoke(ctx, Control_ListWorkers_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 func (c *controlClient) ListActors(ctx context.Context, in *ListActorsRequest, opts ...grpc.CallOption) (*ListActorsResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListActorsResponse)
@@ -173,8 +160,6 @@ type ControlServer interface {
 	ResumeActor(context.Context, *ResumeActorRequest) (*ResumeActorResponse, error)
 	// Delete an actor. Only suspended actors can be deleted.
 	DeleteActor(context.Context, *DeleteActorRequest) (*DeleteActorResponse, error)
-	// List all workers currently reflected in redis.
-	ListWorkers(context.Context, *ListWorkersRequest) (*ListWorkersResponse, error)
 	// List all actors currently reflected in redis.
 	ListActors(context.Context, *ListActorsRequest) (*ListActorsResponse, error)
 	// Debugging: drop all data from the ate database.
@@ -203,9 +188,6 @@ func (UnimplementedControlServer) ResumeActor(context.Context, *ResumeActorReque
 }
 func (UnimplementedControlServer) DeleteActor(context.Context, *DeleteActorRequest) (*DeleteActorResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method DeleteActor not implemented")
-}
-func (UnimplementedControlServer) ListWorkers(context.Context, *ListWorkersRequest) (*ListWorkersResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method ListWorkers not implemented")
 }
 func (UnimplementedControlServer) ListActors(context.Context, *ListActorsRequest) (*ListActorsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListActors not implemented")
@@ -324,24 +306,6 @@ func _Control_DeleteActor_Handler(srv interface{}, ctx context.Context, dec func
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Control_ListWorkers_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ListWorkersRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(ControlServer).ListWorkers(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: Control_ListWorkers_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(ControlServer).ListWorkers(ctx, req.(*ListWorkersRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 func _Control_ListActors_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ListActorsRequest)
 	if err := dec(in); err != nil {
@@ -404,10 +368,6 @@ var Control_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DeleteActor",
 			Handler:    _Control_DeleteActor_Handler,
-		},
-		{
-			MethodName: "ListWorkers",
-			Handler:    _Control_ListWorkers_Handler,
 		},
 		{
 			MethodName: "ListActors",

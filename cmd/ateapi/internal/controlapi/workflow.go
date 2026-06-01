@@ -16,7 +16,6 @@ package controlapi
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
@@ -28,7 +27,6 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	grpcCodes "google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"k8s.io/apimachinery/pkg/util/wait"
 )
 
 // WorkflowStep represents a single, idempotent operation in a workflow graph.
@@ -45,10 +43,6 @@ type WorkflowStep[Params any, Context any] interface {
 	// Execute performs the step's business logic and persists any state changes.
 	// If an error is returned, the workflow stops and relies on the client to retry.
 	Execute(ctx context.Context, params Params, wCtx Context) error
-
-	// RetryBackoff returns an optional backoff configuration for this step.
-	// If non-nil, the workflow orchestrator automatically retries Execute() on persistence conflicts.
-	RetryBackoff() *wait.Backoff
 }
 
 // RunWorkflow is a synchronous executor that iterates through a sequence of generic steps.
@@ -77,7 +71,7 @@ func RunWorkflow[Params any, Context any](ctx context.Context, params Params, wC
 			continue
 		}
 
-		err = runStep(ctx, params, wCtx, step)
+		err = step.Execute(ctx, params, wCtx)
 		if err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
@@ -90,39 +84,18 @@ func RunWorkflow[Params any, Context any](ctx context.Context, params Params, wC
 	return nil
 }
 
-func runStep[Params any, Context any](ctx context.Context, params Params, wCtx Context, step WorkflowStep[Params, Context]) error {
-	backoff := step.RetryBackoff()
-	if backoff == nil {
-		return step.Execute(ctx, params, wCtx)
-	}
-
-	return wait.ExponentialBackoff(*backoff, func() (bool, error) {
-		if err := ctx.Err(); err != nil {
-			return false, err
-		}
-		execErr := step.Execute(ctx, params, wCtx)
-		if execErr == nil {
-			return true, nil
-		}
-		if errors.Is(execErr, store.ErrPersistenceRetry) {
-			return false, nil // retryable
-		}
-		return false, execErr // fatal
-	})
-}
-
 // ActorWorkflow handles the workflows for actor's resume / suspend operations.
 type ActorWorkflow struct {
 	store               store.Interface
-	dialer              *AteletDialer
+	ateletManager       *AteletManager
 	actorTemplateLister listersv1alpha1.ActorTemplateLister
 }
 
 // NewActorWorkflow creates a new ActorWorkflow.
-func NewActorWorkflow(store store.Interface, dialer *AteletDialer, actorTemplateLister listersv1alpha1.ActorTemplateLister) *ActorWorkflow {
+func NewActorWorkflow(store store.Interface, ateletManager *AteletManager, actorTemplateLister listersv1alpha1.ActorTemplateLister) *ActorWorkflow {
 	return &ActorWorkflow{
 		store:               store,
-		dialer:              dialer,
+		ateletManager:       ateletManager,
 		actorTemplateLister: actorTemplateLister,
 	}
 }
@@ -145,9 +118,7 @@ func (w *ActorWorkflow) ResumeActor(ctx context.Context, id string, boot bool) (
 
 	steps := []WorkflowStep[*ResumeInput, *ResumeState]{
 		&LoadActorForResumeStep{store: w.store, actorTemplateLister: w.actorTemplateLister},
-		&AssignWorkerStep{store: w.store},
-		&CallAteletRestoreStep{dialer: w.dialer},
-		&FinalizeRunningStep{store: w.store},
+		&PlaceAndRunStep{store: w.store, ateletManager: w.ateletManager},
 	}
 
 	if err := RunWorkflow(ctx, input, state, steps); err != nil {
@@ -175,7 +146,7 @@ func (w *ActorWorkflow) SuspendActor(ctx context.Context, id string) (*ateapipb.
 	steps := []WorkflowStep[*SuspendInput, *SuspendState]{
 		&LoadActorForSuspendStep{store: w.store, actorTemplateLister: w.actorTemplateLister},
 		&MarkSuspendingStep{store: w.store},
-		&CallAteletSuspendStep{dialer: w.dialer},
+		&CallAteletSuspendStep{ateletManager: w.ateletManager},
 		&FinalizeSuspendedStep{store: w.store},
 	}
 

@@ -188,111 +188,6 @@ func TestUpdateActor_Conflict(t *testing.T) {
 	}
 }
 
-func TestGetWorker_NotFound(t *testing.T) {
-	mr, s, ctx := setupTest(t)
-	defer mr.Close()
-
-	_, err := s.GetWorker(ctx, "default", "pool-1", "non-existent")
-	if !errors.Is(err, store.ErrNotFound) {
-		t.Errorf("expected ErrNotFound, got %v", err)
-	}
-}
-
-func TestCreateWorker_Success(t *testing.T) {
-	mr, s, ctx := setupTest(t)
-	defer mr.Close()
-
-	worker := &ateapipb.Worker{
-		WorkerNamespace: "default",
-		WorkerPool:      "pool-1",
-		WorkerPod:       "pod-1",
-	}
-
-	err := s.CreateWorker(ctx, worker)
-	if err != nil {
-		t.Fatalf("CreateWorker failed: %v", err)
-	}
-
-	got, err := s.GetWorker(ctx, "default", "pool-1", "pod-1")
-	if err != nil {
-		t.Fatalf("GetWorker failed: %v", err)
-	}
-
-	if got.Version != 1 {
-		t.Errorf("expected version 1, got %d", got.Version)
-	}
-
-	worker.Version = 1
-	if diff := cmp.Diff(worker, got, protocmp.Transform()); diff != "" {
-		t.Errorf("GetWorker returned unexpected worker (-want +got):\n%s", diff)
-	}
-}
-
-func TestUpdateWorker_Success(t *testing.T) {
-	mr, s, ctx := setupTest(t)
-	defer mr.Close()
-
-	worker := &ateapipb.Worker{
-		WorkerNamespace: "default",
-		WorkerPool:      "pool-1",
-		WorkerPod:       "pod-1",
-	}
-
-	err := s.CreateWorker(ctx, worker)
-	if err != nil {
-		t.Fatalf("CreateWorker failed: %v", err)
-	}
-
-	worker.ActorNamespace = "default"
-	worker.ActorTemplate = "test-template"
-	worker.ActorId = "session-1"
-
-	err = s.UpdateWorker(ctx, worker, 1)
-	if err != nil {
-		t.Fatalf("UpdateWorker failed: %v", err)
-	}
-
-	got, err := s.GetWorker(ctx, "default", "pool-1", "pod-1")
-	if err != nil {
-		t.Fatalf("GetWorker failed: %v", err)
-	}
-
-	if got.Version != 2 {
-		t.Errorf("expected version 2, got %d", got.Version)
-	}
-
-	worker.Version = 2
-	if diff := cmp.Diff(worker, got, protocmp.Transform()); diff != "" {
-		t.Errorf("UpdateWorker yielded unexpected state in DB (-want +got):\n%s", diff)
-	}
-}
-
-func TestDeleteWorker(t *testing.T) {
-	mr, s, ctx := setupTest(t)
-	defer mr.Close()
-
-	worker := &ateapipb.Worker{
-		WorkerNamespace: "default",
-		WorkerPool:      "pool-1",
-		WorkerPod:       "pod-1",
-	}
-
-	err := s.CreateWorker(ctx, worker)
-	if err != nil {
-		t.Fatalf("CreateWorker failed: %v", err)
-	}
-
-	err = s.DeleteWorker(ctx, "default", "pool-1", "pod-1")
-	if err != nil {
-		t.Fatalf("DeleteWorker failed: %v", err)
-	}
-
-	_, err = s.GetWorker(ctx, "default", "pool-1", "pod-1")
-	if !errors.Is(err, store.ErrNotFound) {
-		t.Errorf("expected ErrNotFound after delete, got %v", err)
-	}
-}
-
 func TestDeleteActor(t *testing.T) {
 	mr, s, ctx := setupTest(t)
 	defer mr.Close()
@@ -352,57 +247,11 @@ func TestDeleteActor_NotFound(t *testing.T) {
 	}
 }
 
-func TestListWorkers(t *testing.T) {
-	mr, s, ctx := setupTest(t)
-	defer mr.Close()
-
-	worker1 := &ateapipb.Worker{
-		WorkerNamespace: "ns1",
-		WorkerPool:      "pool1",
-		WorkerPod:       "pod1",
-	}
-	worker2 := &ateapipb.Worker{
-		WorkerNamespace: "ns1",
-		WorkerPool:      "pool1",
-		WorkerPod:       "pod2",
-	}
-	if err := s.CreateWorker(ctx, worker1); err != nil {
-		t.Fatalf("failed to create worker1: %v", err)
-	}
-	if err := s.CreateWorker(ctx, worker2); err != nil {
-		t.Fatalf("failed to create worker2: %v", err)
-	}
-
-	workers, err := s.ListWorkers(ctx)
-	if err != nil {
-		t.Fatalf("ListWorkers failed: %v", err)
-	}
-
-	if len(workers) != 2 {
-		t.Errorf("expected 2 workers, got %d", len(workers))
-	}
-
-	found1 := false
-	found2 := false
-	for _, w := range workers {
-		if w.GetWorkerPod() == "pod1" {
-			found1 = true
-		}
-		if w.GetWorkerPod() == "pod2" {
-			found2 = true
-		}
-	}
-	if !found1 || !found2 {
-		t.Errorf("did not find all workers: found1=%t, found2=%t", found1, found2)
-	}
-}
-
 func TestListActors(t *testing.T) {
 	mr, s, ctx := setupTest(t)
 	defer mr.Close()
 
 	actor1 := &ateapipb.Actor{
-
 		ActorId:                "id1",
 		ActorTemplateNamespace: "ns1",
 		ActorTemplateName:      "tmpl1",
@@ -445,83 +294,6 @@ func TestListActors(t *testing.T) {
 	}
 	if !found1 || !found2 {
 		t.Errorf("did not find all actors: found1=%t, found2=%t", found1, found2)
-	}
-}
-
-func TestUpdateWorker_Conflict(t *testing.T) {
-	mr, s, ctx := setupTest(t)
-	defer mr.Close()
-
-	worker := &ateapipb.Worker{
-		WorkerNamespace: "default",
-		WorkerPool:      "pool-1",
-		WorkerPod:       "pod-1",
-	}
-
-	err := s.CreateWorker(ctx, worker)
-	if err != nil {
-		t.Fatalf("CreateWorker failed: %v", err)
-	}
-
-	// Fetch instance 1
-	worker1, err := s.GetWorker(ctx, "default", "pool-1", "pod-1")
-	if err != nil {
-		t.Fatalf("GetWorker failed: %v", err)
-	}
-
-	// Fetch instance 2
-	worker2, err := s.GetWorker(ctx, "default", "pool-1", "pod-1")
-	if err != nil {
-		t.Fatalf("GetWorker failed: %v", err)
-	}
-
-	// Update instance 1
-	worker1.ActorId = "session-1"
-	err = s.UpdateWorker(ctx, worker1, worker1.Version)
-	if err != nil {
-		t.Fatalf("UpdateWorker failed: %v", err)
-	}
-
-	// Try to update instance 2
-	worker2.ActorId = "session-2"
-	err = s.UpdateWorker(ctx, worker2, worker2.Version)
-	if !errors.Is(err, store.ErrPersistenceRetry) {
-		t.Errorf("expected ErrPersistenceRetry, got %v", err)
-	}
-}
-
-func TestCreateWorker_AlreadyExists(t *testing.T) {
-	mr, s, ctx := setupTest(t)
-	defer mr.Close()
-
-	worker := &ateapipb.Worker{
-		WorkerNamespace: "default",
-		WorkerPool:      "pool-1",
-		WorkerPod:       "pod-1",
-	}
-
-	err := s.CreateWorker(ctx, worker)
-	if err != nil {
-		t.Fatalf("CreateWorker failed: %v", err)
-	}
-
-	err = s.CreateWorker(ctx, worker)
-	if !errors.Is(err, store.ErrAlreadyExists) {
-		t.Errorf("expected ErrAlreadyExists, got %v", err)
-	}
-}
-
-func TestListWorkers_Empty(t *testing.T) {
-	mr, s, ctx := setupTest(t)
-	defer mr.Close()
-
-	workers, err := s.ListWorkers(ctx)
-	if err != nil {
-		t.Fatalf("ListWorkers failed: %v", err)
-	}
-
-	if len(workers) != 0 {
-		t.Errorf("expected 0 workers, got %d", len(workers))
 	}
 }
 

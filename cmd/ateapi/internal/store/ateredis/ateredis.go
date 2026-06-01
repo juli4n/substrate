@@ -14,29 +14,15 @@
 
 // Package ateredis is an ate storage backend built on Redis.
 //
-// Actors are stored in keys of the form
-// `actor:<actor-id>`.  They are
-// stored as DBActor JSON-serialized objects, which lets us manipulate them from
-// Redis lua.
+// Actors are stored in keys of the form `actor:<actor-id>`, serialized as
+// protojson DBActor objects.
 //
-// Workers are stored in keys of the form
-// `worker:<namespace>:<pool-name>:<pod-name>`, holding a DBWorker JSON object.
+// Redis / Valkey in cluster mode requires that all keys touched by a single
+// transaction hash to the same cluster slot. Actor operations are scoped to a
+// single actor key so this is not a concern here.
 //
-// Note that redis lua scripting has a restriction that informed the data design
-// here -- a lua script must predeclare all keys it is going to access.  It
-// cannot read one key, then derive another key from the value, and read it.
-// This is why we store the worker status inline in the Actor.
-//
-// Additionally, redis / valkey in cluster mode have a serious restriction that
-// informs our data model: it is not possible for a single "action" to touch
-// keys that hash to to different cluster slots.  This includes lua scripts. The
-// biggest implication here is that it is not possible to atomically mark an
-// actor as scheduled on a worker, and the worker as busy.  So we need to be
-// very careful about the order in which we take these actions.
-//
-// Note also (but I cannot find documentation one way or another) that Redis Lua
-// is not ACID --- power failure, etc may leave us with half of the effects of a
-// script applied.
+// Note that Redis Lua is not ACID — a power failure may leave only part of a
+// script's effects applied.
 package ateredis
 
 import (
@@ -78,9 +64,6 @@ func actorDBKey(id string) string {
 	return "actor:" + id
 }
 
-func workerDBKey(namespace, poolName, podName string) string {
-	return "worker:" + namespace + ":" + poolName + ":" + podName
-}
 
 // DebugClearAll flushes all data from Redis.
 func (s *Persistence) DebugClearAll(ctx context.Context) error {
@@ -140,121 +123,6 @@ func (s *Persistence) CreateActor(ctx context.Context, actor *ateapipb.Actor) er
 		return store.ErrAlreadyExists
 	}
 
-	return nil
-}
-
-func (s *Persistence) CreateWorker(ctx context.Context, worker *ateapipb.Worker) error {
-	dbKey := workerDBKey(worker.GetWorkerNamespace(), worker.GetWorkerPool(), worker.GetWorkerPod())
-
-	// Clone because we will update the version field, and we don't want to
-	// stomp the caller's copy.
-	dbWorker := proto.Clone(worker).(*ateapipb.Worker)
-	dbWorker.Version = 1
-
-	dbWorkerBytes, err := protojson.Marshal(dbWorker)
-	if err != nil {
-		return fmt.Errorf("in protojson.Marshal: %w", err)
-	}
-
-	ok, err := s.rdb.SetNX(ctx, dbKey, dbWorkerBytes, 0).Result()
-	if err != nil {
-		return fmt.Errorf("while executing redis set: %w", err)
-	}
-	if !ok {
-		return store.ErrAlreadyExists
-	}
-
-	return nil
-}
-
-func (s *Persistence) GetWorker(ctx context.Context, namespace, pool, pod string) (*ateapipb.Worker, error) {
-	dbKey := workerDBKey(namespace, pool, pod)
-
-	dbWorkerBytes, err := s.rdb.Get(ctx, dbKey).Bytes()
-	if err != nil {
-		if errors.Is(err, redis.Nil) {
-			return nil, store.ErrNotFound
-		}
-		return nil, fmt.Errorf("while getting worker key %q: %w", dbKey, err)
-	}
-
-	worker := &ateapipb.Worker{}
-	if err := protojson.Unmarshal(dbWorkerBytes, worker); err != nil {
-		return nil, fmt.Errorf("in protojson.Unmarshal: %w", err)
-	}
-
-	if worker.GetWorkerNamespace() != namespace || worker.GetWorkerPool() != pool || worker.GetWorkerPod() != pod {
-		return nil, fmt.Errorf("(impossible) mismatch between stored namespace/pool/pod and key")
-	}
-
-	return worker, nil
-}
-
-func (s *Persistence) UpdateWorker(ctx context.Context, worker *ateapipb.Worker, expectedVersion int64) error {
-	dbKey := workerDBKey(worker.GetWorkerNamespace(), worker.GetWorkerPool(), worker.GetWorkerPod())
-
-	// Clone because we will update the version field, and we don't want to
-	// stomp the caller's copy.
-	dbWorker := proto.Clone(worker).(*ateapipb.Worker)
-
-	err := s.rdb.Watch(ctx, func(tx *redis.Tx) error {
-		currentVal, err := tx.Get(ctx, dbKey).Bytes()
-		if err != nil {
-			if errors.Is(err, redis.Nil) {
-				return fmt.Errorf("worker does not exist")
-			}
-			return fmt.Errorf("while getting worker: %w", err)
-		}
-
-		currentWorker := &ateapipb.Worker{}
-		if err := protojson.Unmarshal(currentVal, currentWorker); err != nil {
-			return fmt.Errorf("in protojson.Unmarshal: %w", err)
-		}
-
-		if currentWorker.GetVersion() != expectedVersion {
-			return store.ErrPersistenceRetry
-		}
-		dbWorker.Version = currentWorker.GetVersion() + 1
-		if currentWorker.GetWorkerNamespace() != dbWorker.GetWorkerNamespace() {
-			return fmt.Errorf("worker_namespace is immutable")
-		}
-		if currentWorker.GetWorkerPool() != dbWorker.GetWorkerPool() {
-			return fmt.Errorf("worker_pool is immutable")
-		}
-		if currentWorker.GetWorkerPod() != dbWorker.GetWorkerPod() {
-			return fmt.Errorf("worker_pod is immutable")
-		}
-		if currentWorker.GetIp() != dbWorker.GetIp() {
-			return fmt.Errorf("ip is immutable")
-		}
-
-		newVal, err := protojson.Marshal(dbWorker)
-		if err != nil {
-			return fmt.Errorf("in protojson.Marshal: %w", err)
-		}
-
-		_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
-			pipe.Set(ctx, dbKey, newVal, 0)
-			return nil
-		})
-		return err
-	}, dbKey)
-	if err != nil {
-		if errors.Is(err, store.ErrPersistenceRetry) || errors.Is(err, redis.TxFailedErr) {
-			return store.ErrPersistenceRetry
-		}
-		return fmt.Errorf("while executing update worker transaction: %w", err)
-	}
-
-	return nil
-}
-
-func (s *Persistence) DeleteWorker(ctx context.Context, namespace, pool, pod string) error {
-	dbKey := workerDBKey(namespace, pool, pod)
-	err := s.rdb.Del(ctx, dbKey).Err()
-	if err != nil {
-		return fmt.Errorf("while deleting worker key %q: %w", dbKey, err)
-	}
 	return nil
 }
 
@@ -351,46 +219,6 @@ func (s *Persistence) UpdateActor(ctx context.Context, actor *ateapipb.Actor, ex
 
 	actor.Version = dbActor.Version
 	return nil
-}
-
-func (s *Persistence) ListWorkers(ctx context.Context) ([]*ateapipb.Worker, error) {
-	var result []*ateapipb.Worker
-	var mu sync.Mutex
-
-	// Iterate through every Primary (Master) node in the cluster
-	err := s.rdb.ForEachMaster(ctx, func(ctx context.Context, master *redis.Client) error {
-		iter := master.Scan(ctx, 0, "worker:*", 0).Iterator()
-		for iter.Next(ctx) {
-			workerKey := iter.Val()
-			parts := strings.Split(workerKey, ":")
-			if len(parts) != 4 {
-				return fmt.Errorf("bad key format %q", workerKey)
-			}
-
-			getCmd := master.Get(ctx, workerKey)
-			if getCmd.Err() != nil {
-				return fmt.Errorf("while getting worker %q: %w", workerKey, getCmd.Err())
-			}
-
-			worker := &ateapipb.Worker{}
-			if err := protojson.Unmarshal([]byte(getCmd.Val()), worker); err != nil {
-				return fmt.Errorf("in protojson.Unmarshal: %w", err)
-			}
-
-			mu.Lock()
-			result = append(result, worker)
-			mu.Unlock()
-		}
-		if err := iter.Err(); err != nil {
-			return fmt.Errorf("error from iterator: %w", err)
-		}
-
-		return nil
-	})
-	if err != nil {
-		return nil, fmt.Errorf("while iterating all redis master: %w", err)
-	}
-	return result, nil
 }
 
 func (s *Persistence) ListActors(ctx context.Context) ([]*ateapipb.Actor, error) {

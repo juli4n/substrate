@@ -18,6 +18,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -261,24 +262,18 @@ func main() {
 	ateFactory := externalversions.NewSharedInformerFactory(ateClient, 0)
 	actorTemplateLister := ateFactory.Api().V1alpha1().ActorTemplates().Lister()
 
-	workerPodInformerFactory, workerPodInformer := controlapi.WorkerPodInformer(clientset)
 	ateletPodInformerFactory, ateletPodInformer := controlapi.AteletInformer(clientset)
-
-	syncer := controlapi.NewWorkerPoolSyncer(redisPersistence, workerPodInformer)
-	syncer.Start(ctx)
 
 	stopCh := make(chan struct{})
 	defer close(stopCh)
-	workerPodInformerFactory.Start(stopCh)
 	ateletPodInformerFactory.Start(stopCh)
 	ateFactory.Start(stopCh)
 
-	workerPodInformerFactory.WaitForCacheSync(stopCh)
 	ateletPodInformerFactory.WaitForCacheSync(stopCh)
 	ateFactory.WaitForCacheSync(stopCh)
 
-	dialer := controlapi.NewAteletDialer(workerPodInformer.GetIndexer(), ateletPodInformer.GetIndexer())
-	sm := controlapi.NewService(redisPersistence, actorTemplateLister, dialer)
+	ateletManager := controlapi.NewAteletManager(ctx, ateletPodInformer)
+	sm := controlapi.NewService(redisPersistence, actorTemplateLister, ateletManager)
 
 	sessionIdentitySrv := sessionidentity.New(*clientJWTIssuer, *clientJWTAudience, *sessionIDJWTPoolFile, *sessionIDCAPoolFile, *workerpoolCACerts)
 
@@ -304,6 +299,13 @@ func main() {
 		mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
 			w.Write([]byte("ok"))
+		})
+		mux.HandleFunc("/capacityz", func(w http.ResponseWriter, r *http.Request) {
+			dump := ateletManager.Dump()
+			w.Header().Set("Content-Type", "application/json")
+			enc := json.NewEncoder(w)
+			enc.SetIndent("", "  ")
+			enc.Encode(dump) //nolint:errcheck
 		})
 		slog.InfoContext(ctx, fmt.Sprintf("Starting Prometheus metrics server on %s", *metricsListenAddr))
 		if err := http.ListenAndServe(*metricsListenAddr, mux); err != nil {

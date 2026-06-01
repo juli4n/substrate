@@ -38,9 +38,6 @@ service Control {
   // Delete an actor. Only suspended actors can be deleted.
   rpc DeleteActor(DeleteActorRequest) returns (DeleteActorResponse) {}
 
-  // List all workers currently reflected in redis.
-  rpc ListWorkers(ListWorkersRequest) returns (ListWorkersResponse) {}
-
   // List all actors currently reflected in redis.
   rpc ListActors(ListActorsRequest) returns (ListActorsResponse) {}
 
@@ -70,6 +67,11 @@ message Actor {
 
   string last_snapshot        = 9;
   string in_progress_snapshot = 10;
+
+  // The node name where this actor last ran (or is currently running).
+  // Persists across suspend/resume cycles and is used as a placement hint
+  // to prefer the same node on resume.
+  string last_node_name = 11;
 }
 
 message GetActorRequest {
@@ -121,28 +123,10 @@ message DeleteActorRequest {
 
 message DeleteActorResponse {}
 
-message ListWorkersRequest {}
-
-message ListWorkersResponse {
-  repeated Worker workers = 1;
-}
-
 message ListActorsRequest {}
 
 message ListActorsResponse {
   repeated Actor actors = 1;
-}
-
-message Worker {
-  string worker_namespace = 1;
-  string worker_pool      = 2;
-  string worker_pod       = 3;
-
-  string actor_namespace = 4;
-  string actor_template  = 5;
-  string actor_id        = 6;
-  string ip              = 7;
-  int64  version         = 8;
 }
 
 message DebugClearRequest {}

@@ -75,52 +75,6 @@ func PrintActorsTo(out io.Writer, actors []*ateapipb.Actor, format string) error
 	}
 }
 
-// PrintWorkers prints a slice of workers to stdout in the requested format.
-func PrintWorkers(workers []*ateapipb.Worker, format string) error {
-	return PrintWorkersTo(os.Stdout, workers, format)
-}
-
-func sortWorkers(workers []*ateapipb.Worker) {
-	slices.SortFunc(workers, func(a, b *ateapipb.Worker) int {
-		if c := cmp.Compare(a.GetWorkerNamespace(), b.GetWorkerNamespace()); c != 0 {
-			return c
-		}
-		if c := cmp.Compare(a.GetWorkerPool(), b.GetWorkerPool()); c != 0 {
-			return c
-		}
-		return cmp.Compare(a.GetWorkerPod(), b.GetWorkerPod())
-	})
-}
-
-// PrintWorkersTo prints a slice of workers to the provided writer.
-func PrintWorkersTo(out io.Writer, workers []*ateapipb.Worker, format string) error {
-	sortWorkers(workers)
-	switch format {
-	case "json", "yaml":
-		return printProto(out, &ateapipb.ListWorkersResponse{Workers: workers}, format)
-	case "table":
-		w := tabwriter.NewWriter(out, 0, 0, 3, ' ', 0)
-		fmt.Fprintln(w, "NAMESPACE\tPOOL\tPOD\tSTATUS\tASSIGNED ACTOR")
-		for _, worker := range workers {
-			ns := worker.GetWorkerNamespace()
-			pool := worker.GetWorkerPool()
-			pod := worker.GetWorkerPod()
-
-			status := "FREE"
-			assignedActor := "<none>"
-			if worker.GetActorId() != "" {
-				status = "ASSIGNED"
-				assignedActor = fmt.Sprintf("%s/%s/%s", worker.GetActorNamespace(), worker.GetActorTemplate(), worker.GetActorId())
-			}
-
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", ns, pool, pod, status, assignedActor)
-		}
-		return w.Flush()
-	default:
-		return fmt.Errorf("unsupported format %q", format)
-	}
-}
-
 // PrintActor prints a single actor in the requested format.
 func PrintActor(actor *ateapipb.Actor, format string) error {
 	return PrintActors([]*ateapipb.Actor{actor}, format)
