@@ -124,9 +124,10 @@ func (s *CallAteletSuspendStep) Execute(ctx context.Context, input *SuspendInput
 	// into the snapshot manifest.
 	req := &ateletpb.CheckpointRequest{
 		TargetAteomUid:         state.Actor.GetAteomPodUid(),
+		Atespace:               state.Actor.GetAtespace(),
+		ActorId:                state.Actor.GetActorId(),
 		ActorTemplateNamespace: state.Actor.GetActorTemplateNamespace(),
 		ActorTemplateName:      state.Actor.GetActorTemplateName(),
-		ActorId:                state.Actor.GetActorId(),
 		Spec:                   workloadSpec,
 		Type:                   ateletpb.CheckpointType_CHECKPOINT_TYPE_EXTERNAL,
 		Config: &ateletpb.CheckpointRequest_ExternalConfig{

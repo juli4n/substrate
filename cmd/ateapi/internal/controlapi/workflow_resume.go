@@ -271,9 +271,10 @@ func (s *CallAteletRestoreStep) Execute(ctx context.Context, input *ResumeInput,
 
 		req := &ateletpb.RestoreRequest{
 			TargetAteomUid:         state.Actor.GetAteomPodUid(),
+			Atespace:               state.Actor.GetAtespace(),
+			ActorId:                state.Actor.GetActorId(),
 			ActorTemplateNamespace: state.Actor.GetActorTemplateNamespace(),
 			ActorTemplateName:      state.Actor.GetActorTemplateName(),
-			ActorId:                state.Actor.GetActorId(),
 			Spec:                   workloadSpec,
 		}
 		switch state.Actor.GetLatestSnapshotInfo().GetType() {
@@ -309,9 +310,10 @@ func (s *CallAteletRestoreStep) Execute(ctx context.Context, input *ResumeInput,
 
 		req := &ateletpb.RestoreRequest{
 			TargetAteomUid:         state.Actor.GetAteomPodUid(),
+			Atespace:               state.Actor.GetAtespace(),
+			ActorId:                state.Actor.GetActorId(),
 			ActorTemplateNamespace: state.Actor.GetActorTemplateNamespace(),
 			ActorTemplateName:      state.Actor.GetActorTemplateName(),
-			ActorId:                state.Actor.GetActorId(),
 			Spec:                   workloadSpec,
 			Type:                   ateletpb.CheckpointType_CHECKPOINT_TYPE_EXTERNAL,
 			Config: &ateletpb.RestoreRequest_ExternalConfig{
@@ -339,9 +341,10 @@ func (s *CallAteletRestoreStep) Execute(ctx context.Context, input *ResumeInput,
 
 		req := &ateletpb.RunRequest{
 			TargetAteomUid:         state.Actor.GetAteomPodUid(),
+			Atespace:               state.Actor.GetAtespace(),
+			ActorId:                state.Actor.GetActorId(),
 			ActorTemplateNamespace: state.Actor.GetActorTemplateNamespace(),
 			ActorTemplateName:      state.Actor.GetActorTemplateName(),
-			ActorId:                state.Actor.GetActorId(),
 			SandboxAssets:          sandboxAssets,
 			Spec:                   workloadSpec,
 		}
