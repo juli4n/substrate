@@ -48,9 +48,8 @@ service Ateom {
 }
 
 message RunWorkloadRequest {
-  string actor_template_namespace = 1;
-  string actor_template_name      = 2;
-  string actor_id                 = 3;
+  string atespace = 1;
+  string actor_id = 3;
 
   string runsc_path = 4;
 
@@ -104,9 +103,8 @@ enum SnapshotScope {
 }
 
 message CheckpointWorkloadRequest {
-  string actor_template_namespace = 1;
-  string actor_template_name      = 2;
-  string actor_id                 = 3;
+  string atespace = 1;
+  string actor_id = 3;
 
   string runsc_path = 4;
 
@@ -138,9 +136,8 @@ message CheckpointWorkloadResponse {
 }
 
 message RestoreWorkloadRequest {
-  string actor_template_namespace = 1;
-  string actor_template_name      = 2;
-  string actor_id                 = 3;
+  string atespace = 1;
+  string actor_id = 3;
 
   string runsc_path = 4;
 

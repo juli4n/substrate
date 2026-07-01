@@ -270,11 +270,10 @@ func (s *CallAteletRestoreStep) Execute(ctx context.Context, input *ResumeInput,
 		slog.InfoContext(ctx, "Actor has snapshot; Restoring from snapshot")
 
 		req := &ateletpb.RestoreRequest{
-			TargetAteomUid:         state.Actor.GetAteomPodUid(),
-			ActorTemplateNamespace: state.Actor.GetActorTemplateNamespace(),
-			ActorTemplateName:      state.Actor.GetActorTemplateName(),
-			ActorId:                state.Actor.GetActorId(),
-			Spec:                   workloadSpec,
+			TargetAteomUid: state.Actor.GetAteomPodUid(),
+			Atespace:       state.Actor.GetAtespace(),
+			ActorId:        state.Actor.GetActorId(),
+			Spec:           workloadSpec,
 		}
 		switch state.Actor.GetLatestSnapshotInfo().GetType() {
 		case ateapipb.SnapshotType_SNAPSHOT_TYPE_LOCAL:
@@ -308,12 +307,11 @@ func (s *CallAteletRestoreStep) Execute(ctx context.Context, input *ResumeInput,
 		snapshot := state.ActorTemplate.Status.GoldenSnapshot
 
 		req := &ateletpb.RestoreRequest{
-			TargetAteomUid:         state.Actor.GetAteomPodUid(),
-			ActorTemplateNamespace: state.Actor.GetActorTemplateNamespace(),
-			ActorTemplateName:      state.Actor.GetActorTemplateName(),
-			ActorId:                state.Actor.GetActorId(),
-			Spec:                   workloadSpec,
-			Type:                   ateletpb.CheckpointType_CHECKPOINT_TYPE_EXTERNAL,
+			TargetAteomUid: state.Actor.GetAteomPodUid(),
+			Atespace:       state.Actor.GetAtespace(),
+			ActorId:        state.Actor.GetActorId(),
+			Spec:           workloadSpec,
+			Type:           ateletpb.CheckpointType_CHECKPOINT_TYPE_EXTERNAL,
 			Config: &ateletpb.RestoreRequest_ExternalConfig{
 				ExternalConfig: &ateletpb.ExternalCheckpointConfiguration{
 					SnapshotUriPrefix: snapshot,
@@ -338,12 +336,11 @@ func (s *CallAteletRestoreStep) Execute(ctx context.Context, input *ResumeInput,
 		}
 
 		req := &ateletpb.RunRequest{
-			TargetAteomUid:         state.Actor.GetAteomPodUid(),
-			ActorTemplateNamespace: state.Actor.GetActorTemplateNamespace(),
-			ActorTemplateName:      state.Actor.GetActorTemplateName(),
-			ActorId:                state.Actor.GetActorId(),
-			SandboxAssets:          sandboxAssets,
-			Spec:                   workloadSpec,
+			TargetAteomUid: state.Actor.GetAteomPodUid(),
+			Atespace:       state.Actor.GetAtespace(),
+			ActorId:        state.Actor.GetActorId(),
+			SandboxAssets:  sandboxAssets,
+			Spec:           workloadSpec,
 		}
 		_, err = client.Run(ctx, req)
 		if err != nil {

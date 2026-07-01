@@ -91,12 +91,11 @@ func (SnapshotScope) EnumDescriptor() ([]byte, []int) {
 }
 
 type RunWorkloadRequest struct {
-	state                  protoimpl.MessageState `protogen:"open.v1"`
-	ActorTemplateNamespace string                 `protobuf:"bytes,1,opt,name=actor_template_namespace,json=actorTemplateNamespace,proto3" json:"actor_template_namespace,omitempty"`
-	ActorTemplateName      string                 `protobuf:"bytes,2,opt,name=actor_template_name,json=actorTemplateName,proto3" json:"actor_template_name,omitempty"`
-	ActorId                string                 `protobuf:"bytes,3,opt,name=actor_id,json=actorId,proto3" json:"actor_id,omitempty"`
-	RunscPath              string                 `protobuf:"bytes,4,opt,name=runsc_path,json=runscPath,proto3" json:"runsc_path,omitempty"`
-	Spec                   *WorkloadSpec          `protobuf:"bytes,5,opt,name=spec,proto3" json:"spec,omitempty"`
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	Atespace  string                 `protobuf:"bytes,1,opt,name=atespace,proto3" json:"atespace,omitempty"`
+	ActorId   string                 `protobuf:"bytes,3,opt,name=actor_id,json=actorId,proto3" json:"actor_id,omitempty"`
+	RunscPath string                 `protobuf:"bytes,4,opt,name=runsc_path,json=runscPath,proto3" json:"runsc_path,omitempty"`
+	Spec      *WorkloadSpec          `protobuf:"bytes,5,opt,name=spec,proto3" json:"spec,omitempty"`
 	// runtime_asset_paths maps a runtime asset name (e.g. "cloud-hypervisor",
 	// "virtiofsd", "kata-kernel", "kata-image", "kata-config")
 	// to the local on-disk path atelet fetched it to (content-addressed, like
@@ -136,16 +135,9 @@ func (*RunWorkloadRequest) Descriptor() ([]byte, []int) {
 	return file_ateom_proto_rawDescGZIP(), []int{0}
 }
 
-func (x *RunWorkloadRequest) GetActorTemplateNamespace() string {
+func (x *RunWorkloadRequest) GetAtespace() string {
 	if x != nil {
-		return x.ActorTemplateNamespace
-	}
-	return ""
-}
-
-func (x *RunWorkloadRequest) GetActorTemplateName() string {
-	if x != nil {
-		return x.ActorTemplateName
+		return x.Atespace
 	}
 	return ""
 }
@@ -421,12 +413,11 @@ func (*RunWorkloadResponse) Descriptor() ([]byte, []int) {
 }
 
 type CheckpointWorkloadRequest struct {
-	state                  protoimpl.MessageState `protogen:"open.v1"`
-	ActorTemplateNamespace string                 `protobuf:"bytes,1,opt,name=actor_template_namespace,json=actorTemplateNamespace,proto3" json:"actor_template_namespace,omitempty"`
-	ActorTemplateName      string                 `protobuf:"bytes,2,opt,name=actor_template_name,json=actorTemplateName,proto3" json:"actor_template_name,omitempty"`
-	ActorId                string                 `protobuf:"bytes,3,opt,name=actor_id,json=actorId,proto3" json:"actor_id,omitempty"`
-	RunscPath              string                 `protobuf:"bytes,4,opt,name=runsc_path,json=runscPath,proto3" json:"runsc_path,omitempty"`
-	Spec                   *WorkloadSpec          `protobuf:"bytes,5,opt,name=spec,proto3" json:"spec,omitempty"`
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	Atespace  string                 `protobuf:"bytes,1,opt,name=atespace,proto3" json:"atespace,omitempty"`
+	ActorId   string                 `protobuf:"bytes,3,opt,name=actor_id,json=actorId,proto3" json:"actor_id,omitempty"`
+	RunscPath string                 `protobuf:"bytes,4,opt,name=runsc_path,json=runscPath,proto3" json:"runsc_path,omitempty"`
+	Spec      *WorkloadSpec          `protobuf:"bytes,5,opt,name=spec,proto3" json:"spec,omitempty"`
 	// An object storage URI prefix below which the checkpoint data will be
 	// stored.
 	//
@@ -475,16 +466,9 @@ func (*CheckpointWorkloadRequest) Descriptor() ([]byte, []int) {
 	return file_ateom_proto_rawDescGZIP(), []int{6}
 }
 
-func (x *CheckpointWorkloadRequest) GetActorTemplateNamespace() string {
+func (x *CheckpointWorkloadRequest) GetAtespace() string {
 	if x != nil {
-		return x.ActorTemplateNamespace
-	}
-	return ""
-}
-
-func (x *CheckpointWorkloadRequest) GetActorTemplateName() string {
-	if x != nil {
-		return x.ActorTemplateName
+		return x.Atespace
 	}
 	return ""
 }
@@ -579,12 +563,11 @@ func (x *CheckpointWorkloadResponse) GetSnapshotFiles() []string {
 }
 
 type RestoreWorkloadRequest struct {
-	state                  protoimpl.MessageState `protogen:"open.v1"`
-	ActorTemplateNamespace string                 `protobuf:"bytes,1,opt,name=actor_template_namespace,json=actorTemplateNamespace,proto3" json:"actor_template_namespace,omitempty"`
-	ActorTemplateName      string                 `protobuf:"bytes,2,opt,name=actor_template_name,json=actorTemplateName,proto3" json:"actor_template_name,omitempty"`
-	ActorId                string                 `protobuf:"bytes,3,opt,name=actor_id,json=actorId,proto3" json:"actor_id,omitempty"`
-	RunscPath              string                 `protobuf:"bytes,4,opt,name=runsc_path,json=runscPath,proto3" json:"runsc_path,omitempty"`
-	Spec                   *WorkloadSpec          `protobuf:"bytes,5,opt,name=spec,proto3" json:"spec,omitempty"`
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	Atespace  string                 `protobuf:"bytes,1,opt,name=atespace,proto3" json:"atespace,omitempty"`
+	ActorId   string                 `protobuf:"bytes,3,opt,name=actor_id,json=actorId,proto3" json:"actor_id,omitempty"`
+	RunscPath string                 `protobuf:"bytes,4,opt,name=runsc_path,json=runscPath,proto3" json:"runsc_path,omitempty"`
+	Spec      *WorkloadSpec          `protobuf:"bytes,5,opt,name=spec,proto3" json:"spec,omitempty"`
 	// The object storage URI prefix of the snapshot to restore.
 	SnapshotUriPrefix string `protobuf:"bytes,6,opt,name=snapshot_uri_prefix,json=snapshotUriPrefix,proto3" json:"snapshot_uri_prefix,omitempty"`
 	// runtime_asset_paths maps a runtime asset name to the local on-disk path
@@ -626,16 +609,9 @@ func (*RestoreWorkloadRequest) Descriptor() ([]byte, []int) {
 	return file_ateom_proto_rawDescGZIP(), []int{8}
 }
 
-func (x *RestoreWorkloadRequest) GetActorTemplateNamespace() string {
+func (x *RestoreWorkloadRequest) GetAtespace() string {
 	if x != nil {
-		return x.ActorTemplateNamespace
-	}
-	return ""
-}
-
-func (x *RestoreWorkloadRequest) GetActorTemplateName() string {
-	if x != nil {
-		return x.ActorTemplateName
+		return x.Atespace
 	}
 	return ""
 }
@@ -722,10 +698,9 @@ var File_ateom_proto protoreflect.FileDescriptor
 
 const file_ateom_proto_rawDesc = "" +
 	"\n" +
-	"\vateom.proto\x12\x05ateom\"\x89\x03\n" +
-	"\x12RunWorkloadRequest\x128\n" +
-	"\x18actor_template_namespace\x18\x01 \x01(\tR\x16actorTemplateNamespace\x12.\n" +
-	"\x13actor_template_name\x18\x02 \x01(\tR\x11actorTemplateName\x12\x19\n" +
+	"\vateom.proto\x12\x05ateom\"\xbb\x02\n" +
+	"\x12RunWorkloadRequest\x12\x1a\n" +
+	"\batespace\x18\x01 \x01(\tR\batespace\x12\x19\n" +
 	"\bactor_id\x18\x03 \x01(\tR\aactorId\x12\x1d\n" +
 	"\n" +
 	"runsc_path\x18\x04 \x01(\tR\trunscPath\x12'\n" +
@@ -747,10 +722,9 @@ const file_ateom_proto_rawDesc = "" +
 	"\rHTTPGetAction\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x12\n" +
 	"\x04port\x18\x02 \x01(\x05R\x04port\"\x15\n" +
-	"\x13RunWorkloadResponse\"\xf3\x03\n" +
-	"\x19CheckpointWorkloadRequest\x128\n" +
-	"\x18actor_template_namespace\x18\x01 \x01(\tR\x16actorTemplateNamespace\x12.\n" +
-	"\x13actor_template_name\x18\x02 \x01(\tR\x11actorTemplateName\x12\x19\n" +
+	"\x13RunWorkloadResponse\"\xa5\x03\n" +
+	"\x19CheckpointWorkloadRequest\x12\x1a\n" +
+	"\batespace\x18\x01 \x01(\tR\batespace\x12\x19\n" +
 	"\bactor_id\x18\x03 \x01(\tR\aactorId\x12\x1d\n" +
 	"\n" +
 	"runsc_path\x18\x04 \x01(\tR\trunscPath\x12'\n" +
@@ -762,10 +736,9 @@ const file_ateom_proto_rawDesc = "" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"C\n" +
 	"\x1aCheckpointWorkloadResponse\x12%\n" +
-	"\x0esnapshot_files\x18\x01 \x03(\tR\rsnapshotFiles\"\xed\x03\n" +
-	"\x16RestoreWorkloadRequest\x128\n" +
-	"\x18actor_template_namespace\x18\x01 \x01(\tR\x16actorTemplateNamespace\x12.\n" +
-	"\x13actor_template_name\x18\x02 \x01(\tR\x11actorTemplateName\x12\x19\n" +
+	"\x0esnapshot_files\x18\x01 \x03(\tR\rsnapshotFiles\"\x9f\x03\n" +
+	"\x16RestoreWorkloadRequest\x12\x1a\n" +
+	"\batespace\x18\x01 \x01(\tR\batespace\x12\x19\n" +
 	"\bactor_id\x18\x03 \x01(\tR\aactorId\x12\x1d\n" +
 	"\n" +
 	"runsc_path\x18\x04 \x01(\tR\trunscPath\x12'\n" +

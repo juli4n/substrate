@@ -53,13 +53,12 @@ func (s *AteomService) RestoreWorkload(ctx context.Context, req *ateompb.Restore
 	s.lock.Lock()
 	defer s.lock.Unlock()
 
-	ns := req.GetActorTemplateNamespace()
-	name := req.GetActorTemplateName()
+	atespace := req.GetAtespace()
 	id := req.GetActorId()
-	restoreDir := ateompath.RestoreStateDir(ns, name, id)
+	restoreDir := ateompath.RestoreStateDir(atespace, id)
 	tStart := time.Now()
 
-	s.actorLogger.EmitLifecycleLog("Actor restoring", id, name, ns)
+	s.actorLogger.EmitLifecycleLog("Actor restoring", atespace, id)
 
 	rr := s.resolveRuntime(req.GetRuntimeAssetPaths())
 	kata.CleanupSandboxState(ctx, id)
@@ -94,7 +93,7 @@ func (s *AteomService) RestoreWorkload(ctx context.Context, req *ateompb.Restore
 	if len(containers) > maxActorContainers {
 		return nil, status.Errorf(codes.Unimplemented, "ateom-microvm supports at most %d containers, got %d", maxActorContainers, len(containers))
 	}
-	ctrs, err := s.buildActorContainers(ns, name, id, containers)
+	ctrs, err := s.buildActorContainers(atespace, id, containers)
 	if err != nil {
 		return nil, err
 	}
@@ -193,12 +192,12 @@ func (s *AteomService) RestoreWorkload(ctx context.Context, req *ateompb.Restore
 	} else {
 		ra.logAgent = logAC
 		for _, c := range containers {
-			s.startActorLogForwarding(logAC, id, overlayWorkloadID(c.GetName()), c.GetName(), name, ns)
+			s.startActorLogForwarding(logAC, atespace, id, overlayWorkloadID(c.GetName()), c.GetName())
 		}
 	}
 
 	s.running[id] = ra
-	s.actorLogger.EmitLifecycleLog("Actor restored", id, name, ns)
+	s.actorLogger.EmitLifecycleLog("Actor restored", atespace, id)
 	slog.InfoContext(ctx, "Actor restored (overlay rootfs)",
 		slog.String("id", id), slog.Duration("total", time.Since(tStart)))
 	return &ateompb.RestoreWorkloadResponse{}, nil

@@ -844,7 +844,7 @@ func TestListActors_ScopedByAtespace(t *testing.T) {
 	mr, s, ctx := setupTest(t)
 	defer mr.Close()
 
-	mkActor := func(id, atespace string) *ateapipb.Actor {
+	mkActor := func(atespace, id string) *ateapipb.Actor {
 		return &ateapipb.Actor{
 			ActorId:                id,
 			Atespace:               atespace,
@@ -854,9 +854,9 @@ func TestListActors_ScopedByAtespace(t *testing.T) {
 		}
 	}
 	for _, a := range []*ateapipb.Actor{
-		mkActor("a1", "team-a"),
-		mkActor("a2", "team-a"),
-		mkActor("b1", "team-b"),
+		mkActor("team-a", "a1"),
+		mkActor("team-a", "a2"),
+		mkActor("team-b", "b1"),
 	} {
 		if err := s.CreateActor(ctx, a); err != nil {
 			t.Fatalf("CreateActor(%s/%s) failed: %v", a.GetAtespace(), a.GetActorId(), err)

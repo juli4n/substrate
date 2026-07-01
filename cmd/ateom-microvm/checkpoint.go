@@ -45,11 +45,10 @@ func (s *AteomService) CheckpointWorkload(ctx context.Context, req *ateompb.Chec
 	s.lock.Lock()
 	defer s.lock.Unlock()
 
-	ns := req.GetActorTemplateNamespace()
-	name := req.GetActorTemplateName()
+	atespace := req.GetAtespace()
 	id := req.GetActorId()
 
-	s.actorLogger.EmitLifecycleLog("Actor checkpointing", id, name, ns)
+	s.actorLogger.EmitLifecycleLog("Actor checkpointing", atespace, id)
 
 	// The actor's CH was booted by RunWorkload or relaunched by RestoreWorkload;
 	// either way ateom owns it and tracks its api-socket.
@@ -69,7 +68,7 @@ func (s *AteomService) CheckpointWorkload(ctx context.Context, req *ateompb.Chec
 	}
 	dPause := time.Since(tPause)
 
-	checkpointDir := ateompath.CheckpointStateDir(ns, name, id)
+	checkpointDir := ateompath.CheckpointStateDir(atespace, id)
 	// Start from a clean dir so CH's snapshot files are the only contents.
 	if err := os.RemoveAll(checkpointDir); err != nil {
 		return nil, fmt.Errorf("while clearing checkpoint dir %q: %w", checkpointDir, err)
@@ -144,7 +143,7 @@ func (s *AteomService) CheckpointWorkload(ctx context.Context, req *ateompb.Chec
 		slog.WarnContext(ctx, "Failed to clean up actor network after checkpoint", slog.Any("err", err))
 	}
 
-	s.actorLogger.EmitLifecycleLog("Actor checkpointed", id, name, ns)
+	s.actorLogger.EmitLifecycleLog("Actor checkpointed", atespace, id)
 	slog.InfoContext(ctx, "Actor checkpointed", slog.String("id", id), slog.Any("snapshot_files", snapshotFiles),
 		slog.Duration("pause", dPause),
 		slog.Duration("snapshot", dSnapshot), slog.Duration("teardown", dTeardown))

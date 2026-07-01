@@ -840,7 +840,7 @@ func TestListActors_ByAtespace(t *testing.T) {
 	createAtespace(t, tc, "team-a")
 	createAtespace(t, tc, "team-b")
 
-	create := func(id, atespace string) *ateapipb.Actor {
+	create := func(atespace, id string) *ateapipb.Actor {
 		resp, err := tc.client.CreateActor(context.Background(), &ateapipb.CreateActorRequest{
 			ActorRef:               &ateapipb.ActorRef{Atespace: atespace, Name: id},
 			ActorTemplateNamespace: ns,
@@ -851,9 +851,9 @@ func TestListActors_ByAtespace(t *testing.T) {
 		}
 		return resp.GetActor()
 	}
-	a1 := create("id1", "team-a")
-	a2 := create("id2", "team-a")
-	b1 := create("id3", "team-b")
+	a1 := create("team-a", "id1")
+	a2 := create("team-a", "id2")
+	b1 := create("team-b", "id3")
 
 	sortByID := []cmp.Option{
 		protocmp.Transform(),
@@ -897,7 +897,7 @@ func TestListActors_AllAtespaces(t *testing.T) {
 	createAtespace(t, tc, "team-a")
 	createAtespace(t, tc, "team-b")
 
-	create := func(id, atespace string) {
+	create := func(atespace, id string) {
 		if _, err := tc.client.CreateActor(context.Background(), &ateapipb.CreateActorRequest{
 			ActorRef:               &ateapipb.ActorRef{Atespace: atespace, Name: id},
 			ActorTemplateNamespace: ns,
@@ -906,8 +906,8 @@ func TestListActors_AllAtespaces(t *testing.T) {
 			t.Fatalf("CreateActor(%s, atespace=%q) failed: %v", id, atespace, err)
 		}
 	}
-	create("id1", "team-a")
-	create("id2", "team-b")
+	create("team-a", "id1")
+	create("team-b", "id2")
 
 	// Empty atespace lists across all atespaces; returned actors carry their atespace.
 	resp, err := tc.client.ListActors(context.Background(), &ateapipb.ListActorsRequest{})
