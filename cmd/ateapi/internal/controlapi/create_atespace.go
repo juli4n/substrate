@@ -31,15 +31,18 @@ func (s *Service) CreateAtespace(ctx context.Context, req *ateapipb.CreateAtespa
 		return nil, err
 	}
 
-	atespace := &ateapipb.Atespace{Name: req.GetName()}
-	if err := s.persistence.CreateAtespace(ctx, atespace); err != nil {
+	atespace := &ateapipb.Atespace{
+		Metadata: &ateapipb.ResourceMetadata{Name: req.GetName()},
+	}
+	stored, err := s.persistence.CreateAtespace(ctx, atespace)
+	if err != nil {
 		if errors.Is(err, store.ErrAlreadyExists) {
 			return nil, status.Errorf(codes.AlreadyExists, "Atespace %s already exists", req.GetName())
 		}
 		return nil, fmt.Errorf("while recording atespace: %w", err)
 	}
 
-	return &ateapipb.CreateAtespaceResponse{Atespace: atespace}, nil
+	return &ateapipb.CreateAtespaceResponse{Atespace: stored}, nil
 }
 
 func validateCreateAtespaceRequest(req *ateapipb.CreateAtespaceRequest) error {

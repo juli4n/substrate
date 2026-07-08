@@ -40,9 +40,9 @@ import (
 
 // ResumeInput holds the immutable parameters requested by the client.
 type ResumeInput struct {
-	ActorID  string
-	Atespace string
-	Boot     bool
+	ActorName string
+	Atespace  string
+	Boot      bool
 }
 
 // ResumeState holds the mutable state loaded and modified during execution.
@@ -62,10 +62,10 @@ func (s *LoadActorForResumeStep) IsComplete(ctx context.Context, input *ResumeIn
 	return false, nil
 }
 func (s *LoadActorForResumeStep) Execute(ctx context.Context, input *ResumeInput, state *ResumeState) error {
-	actor, err := s.store.GetActor(ctx, input.Atespace, input.ActorID)
+	actor, err := s.store.GetActor(ctx, input.Atespace, input.ActorName)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			return status.Errorf(codes.NotFound, "Actor %s not found", input.ActorID)
+			return status.Errorf(codes.NotFound, "Actor %s not found", input.ActorName)
 		}
 		return fmt.Errorf("while getting actor from DB: %w", err)
 	}
@@ -132,7 +132,7 @@ func (s *AssignWorkerStep) Execute(ctx context.Context, input *ResumeInput, stat
 		if worker.Assignment == nil {
 			continue
 		}
-		if worker.Assignment.Actor.Name != input.ActorID {
+		if worker.Assignment.Actor.Name != input.ActorName {
 			continue
 		}
 		eligible, err := isWorkerEligibleForActor(worker, state.ActorTemplate.Spec.SandboxClass, state.ActorTemplate.Spec.WorkerSelector, state.Actor.GetWorkerSelector())
@@ -175,8 +175,8 @@ func (s *AssignWorkerStep) Execute(ctx context.Context, input *ResumeInput, stat
 			Name:      state.Actor.GetActorTemplateName(),
 		},
 		Actor: &ateapipb.ActorRef{
-			Name:     input.ActorID,
-			Atespace: state.Actor.GetAtespace(),
+			Name:     input.ActorName,
+			Atespace: state.Actor.GetMetadata().GetAtespace(),
 		},
 	}
 
@@ -191,9 +191,11 @@ func (s *AssignWorkerStep) Execute(ctx context.Context, input *ResumeInput, stat
 	state.Actor.AteomPodUid = assignedWorker.GetWorkerPodUid()
 	state.Actor.WorkerPoolName = assignedWorker.GetWorkerPool()
 
-	if err := s.store.UpdateActor(ctx, state.Actor, state.Actor.GetVersion()); err != nil {
+	updatedActor, err := s.store.UpdateActor(ctx, state.Actor, state.Actor.GetMetadata().GetVersion())
+	if err != nil {
 		return err
 	}
+	state.Actor = updatedActor
 	return nil
 }
 
@@ -269,8 +271,8 @@ func (s *CallAteletRestoreStep) Execute(ctx context.Context, input *ResumeInput,
 
 		req := &ateletpb.RestoreRequest{
 			TargetAteomUid:         state.Actor.GetAteomPodUid(),
-			Atespace:               state.Actor.GetAtespace(),
-			ActorId:                state.Actor.GetActorId(),
+			Atespace:               state.Actor.GetMetadata().GetAtespace(),
+			ActorId:                state.Actor.GetMetadata().GetName(),
 			ActorTemplateNamespace: state.Actor.GetActorTemplateNamespace(),
 			ActorTemplateName:      state.Actor.GetActorTemplateName(),
 			Spec:                   workloadSpec,
@@ -297,7 +299,7 @@ func (s *CallAteletRestoreStep) Execute(ctx context.Context, input *ResumeInput,
 		}
 
 		_, err = client.Restore(ctx, req)
-		return maybeCrashActor(ctx, s.store, input.Atespace, input.ActorID, err, "while restoring workload")
+		return maybeCrashActor(ctx, s.store, input.Atespace, input.ActorName, err, "while restoring workload")
 	} else if state.ActorTemplate.Status.GoldenSnapshot != "" && !input.Boot {
 		slog.InfoContext(ctx, "Actor has no snapshot; ActorTemplate has golden snapshot; Restoring from golden snapshot")
 
@@ -305,8 +307,8 @@ func (s *CallAteletRestoreStep) Execute(ctx context.Context, input *ResumeInput,
 
 		req := &ateletpb.RestoreRequest{
 			TargetAteomUid:         state.Actor.GetAteomPodUid(),
-			Atespace:               state.Actor.GetAtespace(),
-			ActorId:                state.Actor.GetActorId(),
+			Atespace:               state.Actor.GetMetadata().GetAtespace(),
+			ActorId:                state.Actor.GetMetadata().GetName(),
 			ActorTemplateNamespace: state.Actor.GetActorTemplateNamespace(),
 			ActorTemplateName:      state.Actor.GetActorTemplateName(),
 			Spec:                   workloadSpec,
@@ -319,7 +321,7 @@ func (s *CallAteletRestoreStep) Execute(ctx context.Context, input *ResumeInput,
 			Scope: toAteletSnapshotScope(state.ActorTemplate.Spec.SnapshotsConfig.OnCommit),
 		}
 		_, err = client.Restore(ctx, req)
-		return maybeCrashActor(ctx, s.store, input.Atespace, input.ActorID, err, "while creating workload from golden snapshot")
+		return maybeCrashActor(ctx, s.store, input.Atespace, input.ActorName, err, "while creating workload from golden snapshot")
 	} else {
 		slog.InfoContext(ctx, "Actor has no snapshot; ActorTemplate has no golden snapshot; Booting from ActorTemplate spec")
 
@@ -333,15 +335,15 @@ func (s *CallAteletRestoreStep) Execute(ctx context.Context, input *ResumeInput,
 
 		req := &ateletpb.RunRequest{
 			TargetAteomUid:         state.Actor.GetAteomPodUid(),
-			Atespace:               state.Actor.GetAtespace(),
-			ActorId:                state.Actor.GetActorId(),
+			Atespace:               state.Actor.GetMetadata().GetAtespace(),
+			ActorId:                state.Actor.GetMetadata().GetName(),
 			ActorTemplateNamespace: state.Actor.GetActorTemplateNamespace(),
 			ActorTemplateName:      state.Actor.GetActorTemplateName(),
 			SandboxAssets:          sandboxAssets,
 			Spec:                   workloadSpec,
 		}
 		_, err = client.Run(ctx, req)
-		return maybeCrashActor(ctx, s.store, input.Atespace, input.ActorID, err, "while creating workload from spec")
+		return maybeCrashActor(ctx, s.store, input.Atespace, input.ActorName, err, "while creating workload from spec")
 	}
 	// Unreachable
 }
@@ -357,17 +359,18 @@ func (s *FinalizeRunningStep) IsComplete(ctx context.Context, input *ResumeInput
 	return state.Actor.GetStatus() == ateapipb.Actor_STATUS_RUNNING, nil
 }
 func (s *FinalizeRunningStep) Execute(ctx context.Context, input *ResumeInput, state *ResumeState) error {
-	latestActor, err := s.store.GetActor(ctx, input.Atespace, input.ActorID)
+	latestActor, err := s.store.GetActor(ctx, input.Atespace, input.ActorName)
 	if err != nil {
 		return err
 	}
 
 	latestActor.Status = ateapipb.Actor_STATUS_RUNNING
-	err = s.store.UpdateActor(ctx, latestActor, latestActor.GetVersion())
-	if err == nil {
-		state.Actor = latestActor
+	updatedActor, err := s.store.UpdateActor(ctx, latestActor, latestActor.GetMetadata().GetVersion())
+	if err != nil {
+		return err
 	}
-	return err
+	state.Actor = updatedActor
+	return nil
 }
 
 func (s *FinalizeRunningStep) RetryBackoff() *wait.Backoff { return nil }

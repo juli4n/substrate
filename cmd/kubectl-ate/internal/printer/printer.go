@@ -36,7 +36,7 @@ func PrintActors(actors []*ateapipb.Actor, format string) error {
 
 func sortActors(actors []*ateapipb.Actor) {
 	slices.SortFunc(actors, func(a, b *ateapipb.Actor) int {
-		if c := cmp.Compare(a.GetAtespace(), b.GetAtespace()); c != 0 {
+		if c := cmp.Compare(a.GetMetadata().GetAtespace(), b.GetMetadata().GetAtespace()); c != 0 {
 			return c
 		}
 		if c := cmp.Compare(a.GetActorTemplateNamespace(), b.GetActorTemplateNamespace()); c != 0 {
@@ -45,7 +45,7 @@ func sortActors(actors []*ateapipb.Actor) {
 		if c := cmp.Compare(a.GetActorTemplateName(), b.GetActorTemplateName()); c != 0 {
 			return c
 		}
-		return cmp.Compare(a.GetActorId(), b.GetActorId())
+		return cmp.Compare(a.GetMetadata().GetName(), b.GetMetadata().GetName())
 	})
 }
 
@@ -59,10 +59,10 @@ func PrintActorsTo(out io.Writer, actors []*ateapipb.Actor, format string) error
 		w := tabwriter.NewWriter(out, 0, 0, 3, ' ', 0)
 		fmt.Fprintln(w, "ATESPACE\tTEMPLATE NS\tTEMPLATE\tID\tSTATUS\tATEOM POD\tATEOM IP\tVERSION")
 		for _, actor := range actors {
-			atespace := actor.GetAtespace()
+			atespace := actor.GetMetadata().GetAtespace()
 			ns := actor.GetActorTemplateNamespace()
 			tmpl := actor.GetActorTemplateName()
-			id := actor.GetActorId()
+			id := actor.GetMetadata().GetName()
 			status := actor.GetStatus().String()
 
 			worker := "<none>"
@@ -70,7 +70,7 @@ func PrintActorsTo(out io.Writer, actors []*ateapipb.Actor, format string) error
 				worker = actor.GetAteomPodNamespace() + "/" + actor.GetAteomPodName()
 			}
 
-			version := actor.GetVersion()
+			version := actor.GetMetadata().GetVersion()
 			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\n", atespace, ns, tmpl, id, status, worker, actor.GetAteomPodIp(), version)
 		}
 		return w.Flush()
@@ -138,7 +138,7 @@ func PrintAtespaces(atespaces []*ateapipb.Atespace, format string) error {
 
 func sortAtespaces(atespaces []*ateapipb.Atespace) {
 	slices.SortFunc(atespaces, func(a, b *ateapipb.Atespace) int {
-		return cmp.Compare(a.GetName(), b.GetName())
+		return cmp.Compare(a.GetMetadata().GetName(), b.GetMetadata().GetName())
 	})
 }
 
@@ -152,7 +152,7 @@ func PrintAtespacesTo(out io.Writer, atespaces []*ateapipb.Atespace, format stri
 		w := tabwriter.NewWriter(out, 0, 0, 3, ' ', 0)
 		fmt.Fprintln(w, "NAME")
 		for _, a := range atespaces {
-			fmt.Fprintf(w, "%s\n", a.GetName())
+			fmt.Fprintf(w, "%s\n", a.GetMetadata().GetName())
 		}
 		return w.Flush()
 	default:

@@ -18,6 +18,8 @@ syntax = "proto3";
 
 package ateapi;
 
+import "google/protobuf/timestamp.proto";
+
 option go_package = "github.com/agent-substrate/substrate/pkg/proto/ateapipb";
 
 
@@ -92,12 +94,36 @@ message Selector {
   map<string, string> match_labels = 1;
 }
 
-message Actor {
-  string actor_id = 1;
-  int64  version  = 2;
+// ResourceMetadata holds the common fields carried by every Substrate resource.
+message ResourceMetadata {
+  // atespace is the namespace the resource belongs to. Empty for global-scoped
+  // resources. Caller-specified at creation and immutable thereafter.
+  string atespace = 1;
 
-  string actor_template_namespace = 3;
-  string actor_template_name      = 4;
+  // name is the resource's name, unique within its atespace (or globally, for
+  // global-scoped resources). Caller-specified at creation and immutable thereafter.
+  string name = 2;
+
+  // uid is a server-assigned, globally unique identifier for this resource.
+  // Immutable throughout the lifecycle of the resource.
+  string uid = 3;
+
+  // version is increased on every mutation.
+  int64 version = 4;
+
+  // create_time is the time the resource was created.
+  google.protobuf.Timestamp create_time = 5;
+
+  // update_time is the time the resource was last updated.
+  google.protobuf.Timestamp update_time = 6;
+}
+
+message Actor {
+  // Common resource metadata: atespace, name, uid, version, timestamps.
+  ResourceMetadata metadata = 1;
+
+  string actor_template_namespace = 2;
+  string actor_template_name      = 3;
 
   enum Status {
     STATUS_UNSPECIFIED = 0;
@@ -109,23 +135,21 @@ message Actor {
     STATUS_PAUSED      = 6;
     STATUS_CRASHED     = 7;
   }
-  Status status = 5;
+  Status status = 4;
 
-  string ateom_pod_namespace = 6;
-  string ateom_pod_name      = 7;
-  string ateom_pod_ip        = 8;
+  string ateom_pod_namespace = 5;
+  string ateom_pod_name      = 6;
+  string ateom_pod_ip        = 7;
 
-  // last_snapshot
-  reserved 9;
-  string in_progress_snapshot = 10;
-  string ateom_pod_uid        = 11;
-  SnapshotInfo latest_snapshot_info = 12;
+  string in_progress_snapshot = 8;
+  string ateom_pod_uid        = 9;
+  SnapshotInfo latest_snapshot_info = 10;
 
   // worker_selector is the per-actor placement constraint. The scheduler
   // evaluates the AND of this selector and the template's workerSelector to
   // find eligible pools. Set at CreateActor; may be updated at any time via
   // UpdateActor. Changes take effect on the next ResumeActor call.
-  Selector worker_selector = 13;
+  Selector worker_selector = 11;
 
   // worker_pool_name is the name of the WorkerPool that owns the currently
   // assigned worker, in the same namespace as ateom_pod_namespace (pool and
@@ -133,16 +157,14 @@ message Actor {
   // and cleared when the worker is freed. Needed to release the worker on
   // suspend/pause since eligibility is no longer a single fixed pool
   // reference on the ActorTemplate.
-  string worker_pool_name = 14;
-
-  // The atespace this actor belongs to. Part of the actor's
-  // resource identity; folded into the Redis key as actor:<atespace>:<actor_id>.
-  string atespace = 15;
+  string worker_pool_name = 12;
 }
 
-// Atespace is the isolation boundary an Actor is created into.
+// Atespace is the isolation boundary an Actor is created into. Global-scoped:
+// metadata.atespace is always empty; the atespace's identity is metadata.name.
 message Atespace {
-  string name = 1;
+  // Common resource metadata: name, uid, version, timestamps.
+  ResourceMetadata metadata = 1;
 }
 
 // ActorRef identifies an actor: a name is only unique within its atespace.

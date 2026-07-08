@@ -245,7 +245,7 @@ func listActorNames(ctx context.Context) []string {
 	}
 	names := make([]string, 0, len(resp.GetActors()))
 	for _, a := range resp.GetActors() {
-		if id := a.GetActorId(); id != "" {
+		if id := a.GetMetadata().GetName(); id != "" {
 			names = append(names, id)
 		}
 	}
@@ -431,7 +431,7 @@ func handleActors(w http.ResponseWriter, r *http.Request) {
 		}
 		actors = append(actors, actorSummary{
 			Kind:    "Actor",
-			Name:    a.GetActorId(),
+			Name:    a.GetMetadata().GetName(),
 			Phase:   actorStatusString(a.GetStatus()),
 			Message: msg,
 		})

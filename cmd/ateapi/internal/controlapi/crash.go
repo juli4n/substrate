@@ -28,25 +28,25 @@ import (
 
 // maybeCrashActor inspects err returned by an atelet RPC, it crashes
 // the actor if the err carries the actorCrashed=true metadata directive.
-func maybeCrashActor(ctx context.Context, st store.Interface, atespace, actorID string, err error, wrapMsg string) error {
+func maybeCrashActor(ctx context.Context, st store.Interface, atespace, actorName string, err error, wrapMsg string) error {
 	if err == nil {
 		return nil
 	}
 
 	if ateerrors.ActorCrashRequested(err) {
 		slog.ErrorContext(ctx, "Setting Actor to crashed due to error", slog.Any("error", err))
-		if cerr := crashActor(ctx, st, atespace, actorID); cerr != nil {
+		if cerr := crashActor(ctx, st, atespace, actorName); cerr != nil {
 			slog.ErrorContext(ctx, "Failed to crash actor", slog.Any("cerr", cerr))
 			return cerr
 		}
-		return status.Errorf(codes.DataLoss, "actor %s crashed", actorID)
+		return status.Errorf(codes.DataLoss, "actor %s crashed", actorName)
 	}
 	return fmt.Errorf("%s: %w", wrapMsg, err)
 }
 
 // crashActor moves the actor to CRASHED state.
-func crashActor(ctx context.Context, st store.Interface, atespace, actorID string) error {
-	actor, err := st.GetActor(ctx, atespace, actorID)
+func crashActor(ctx context.Context, st store.Interface, atespace, actorName string) error {
+	actor, err := st.GetActor(ctx, atespace, actorName)
 	if err != nil {
 		return fmt.Errorf("while loading actor to crash: %w", err)
 	}
@@ -59,7 +59,7 @@ func crashActor(ctx context.Context, st store.Interface, atespace, actorID strin
 	//    we must preserve the Actor's assigned node VM in order
 	//    to support `ate actor dump` command.
 	// (https://github.com/agent-substrate/substrate/issues/119)
-	if err := st.UpdateActor(ctx, actor, actor.GetVersion()); err != nil {
+	if _, err := st.UpdateActor(ctx, actor, actor.GetMetadata().GetVersion()); err != nil {
 		return fmt.Errorf("while marking actor crashed: %w", err)
 	}
 

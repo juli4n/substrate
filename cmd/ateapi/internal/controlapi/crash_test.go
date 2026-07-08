@@ -30,11 +30,10 @@ import (
 
 // seedActor stores a running actor with all worker-binding fields populated, so
 // tests can assert they are cleared when the actor crashes.
-func seedActor(t *testing.T, ctx context.Context, st store.Interface, atespace, id string) {
+func seedActor(t *testing.T, ctx context.Context, st store.Interface, atespace, actorName string) {
 	t.Helper()
-	if err := st.CreateActor(ctx, &ateapipb.Actor{
-		ActorId:           id,
-		Atespace:          atespace,
+	if _, err := st.CreateActor(ctx, &ateapipb.Actor{
+		Metadata:          &ateapipb.ResourceMetadata{Name: actorName, Atespace: atespace},
 		Status:            ateapipb.Actor_STATUS_RUNNING,
 		AteomPodNamespace: "ns",
 		AteomPodName:      "pod",
@@ -47,11 +46,11 @@ func seedActor(t *testing.T, ctx context.Context, st store.Interface, atespace, 
 }
 
 // assertCrashed reloads the actor and verifies it is CRASHED.
-func assertCrashed(t *testing.T, ctx context.Context, st store.Interface, atespace, id string) {
+func assertCrashed(t *testing.T, ctx context.Context, st store.Interface, atespace, actorName string) {
 	t.Helper()
-	got, err := st.GetActor(ctx, atespace, id)
+	got, err := st.GetActor(ctx, atespace, actorName)
 	if err != nil {
-		t.Fatalf("GetActor(%q, %q) = %v, want nil", atespace, id, err)
+		t.Fatalf("GetActor(%q, %q) = %v, want nil", atespace, actorName, err)
 	}
 	if got.GetStatus() != ateapipb.Actor_STATUS_CRASHED {
 		t.Errorf("status = %v, want %v", got.GetStatus(), ateapipb.Actor_STATUS_CRASHED)
@@ -60,8 +59,8 @@ func assertCrashed(t *testing.T, ctx context.Context, st store.Interface, atespa
 
 func TestCrashActor(t *testing.T) {
 	const (
-		atespace = "team-a"
-		actorID  = "actor-1"
+		atespace  = "team-a"
+		actorName = "actor-1"
 	)
 
 	tests := []struct {
@@ -77,7 +76,7 @@ func TestCrashActor(t *testing.T) {
 				if err != nil {
 					t.Fatalf("crashActor() = %v, want nil", err)
 				}
-				assertCrashed(t, ctx, st, atespace, actorID)
+				assertCrashed(t, ctx, st, atespace, actorName)
 			},
 		},
 		{
@@ -104,10 +103,10 @@ func TestCrashActor(t *testing.T) {
 			defer cleanup()
 
 			if tt.seed {
-				seedActor(t, ctx, st, atespace, actorID)
+				seedActor(t, ctx, st, atespace, actorName)
 			}
 
-			err := crashActor(ctx, st, atespace, actorID)
+			err := crashActor(ctx, st, atespace, actorName)
 			tt.check(t, ctx, st, err)
 		})
 	}
@@ -115,9 +114,9 @@ func TestCrashActor(t *testing.T) {
 
 func TestMaybeCrashActor(t *testing.T) {
 	const (
-		atespace = "team-a"
-		actorID  = "actor-1"
-		wrapMsg  = "calling atelet"
+		atespace  = "team-a"
+		actorName = "actor-1"
+		wrapMsg   = "calling atelet"
 	)
 
 	crashErr := ateerrors.NewGRPCError(context.Background(), codes.NotFound, ateerrors.ReasonTerminalFileSystemError, ateerrors.ActorCrashedMetadata(), errors.New("boom"))
@@ -154,7 +153,7 @@ func TestMaybeCrashActor(t *testing.T) {
 				if got := status.Code(err); got != codes.DataLoss {
 					t.Errorf("status code = %v, want %v", got, codes.DataLoss)
 				}
-				assertCrashed(t, ctx, st, atespace, actorID)
+				assertCrashed(t, ctx, st, atespace, actorName)
 			},
 		},
 		{
@@ -188,7 +187,7 @@ func TestMaybeCrashActor(t *testing.T) {
 					t.Errorf("maybeCrashActor() error = %q, want prefix %q", err, wrapMsg)
 				}
 				// The actor must not have been crashed.
-				got, gerr := st.GetActor(ctx, atespace, actorID)
+				got, gerr := st.GetActor(ctx, atespace, actorName)
 				if gerr != nil {
 					t.Fatalf("GetActor() = %v, want nil", gerr)
 				}
@@ -212,7 +211,7 @@ func TestMaybeCrashActor(t *testing.T) {
 					t.Errorf("maybeCrashActor() error = %q, want prefix %q", err, wrapMsg)
 				}
 				// The actor must not have been crashed.
-				got, gerr := st.GetActor(ctx, atespace, actorID)
+				got, gerr := st.GetActor(ctx, atespace, actorName)
 				if gerr != nil {
 					t.Fatalf("GetActor() = %v, want nil", gerr)
 				}
@@ -230,10 +229,10 @@ func TestMaybeCrashActor(t *testing.T) {
 			defer cleanup()
 
 			if tt.seed {
-				seedActor(t, ctx, st, atespace, actorID)
+				seedActor(t, ctx, st, atespace, actorName)
 			}
 
-			err := maybeCrashActor(ctx, st, atespace, actorID, tt.err, wrapMsg)
+			err := maybeCrashActor(ctx, st, atespace, actorName, tt.err, wrapMsg)
 			tt.check(t, ctx, st, err)
 		})
 	}

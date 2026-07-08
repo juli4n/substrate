@@ -41,14 +41,15 @@ func (s *Service) UpdateActor(ctx context.Context, req *ateapipb.UpdateActorRequ
 	}
 	actor.WorkerSelector = req.GetWorkerSelector()
 
-	if err := s.persistence.UpdateActor(ctx, actor, actor.GetVersion()); err != nil {
+	updated, err := s.persistence.UpdateActor(ctx, actor, actor.GetMetadata().GetVersion())
+	if err != nil {
 		if errors.Is(err, store.ErrPersistenceRetry) {
 			return nil, status.Error(codes.Aborted, "concurrent update conflict, please retry")
 		}
 		return nil, fmt.Errorf("while updating actor: %w", err)
 	}
 
-	return &ateapipb.UpdateActorResponse{Actor: actor}, nil
+	return &ateapipb.UpdateActorResponse{Actor: updated}, nil
 }
 
 func validateUpdateActorRequest(req *ateapipb.UpdateActorRequest) error {

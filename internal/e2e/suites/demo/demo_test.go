@@ -164,7 +164,7 @@ func TestDurableDirLifecycle(t *testing.T) {
 			if err != nil {
 				t.Fatalf("failed to create Actor: %v", err)
 			}
-			t.Logf("Successfully created Actor: %s", createResp.GetActor().GetActorId())
+			t.Logf("Successfully created Actor: %s", createResp.GetActor().GetMetadata().GetName())
 			defer func() {
 				clients.SubstrateAPI.DeleteActor(ctx, &ateapipb.DeleteActorRequest{
 					ActorRef: &ateapipb.ActorRef{Atespace: demoAtespace, Name: actorID},
@@ -266,7 +266,7 @@ func createActor(ctx context.Context, t *testing.T, clients *e2e.Clients, nsObj 
 	if err != nil {
 		t.Fatalf("failed to create Actor: %v", err)
 	}
-	t.Logf("Successfully created Actor: %s", createResp.GetActor().GetActorId())
+	t.Logf("Successfully created Actor: %s", createResp.GetActor().GetMetadata().GetName())
 	defer func() {
 		clients.SubstrateAPI.DeleteActor(ctx, &ateapipb.DeleteActorRequest{
 			ActorRef: &ateapipb.ActorRef{Atespace: demoAtespace, Name: actorID},
@@ -280,7 +280,7 @@ func createActor(ctx context.Context, t *testing.T, clients *e2e.Clients, nsObj 
 
 	var myActors []*ateapipb.Actor
 	for _, actor := range listResp.GetActors() {
-		if actor.GetActorTemplateNamespace() == nsObj.Name && actor.GetActorId() == actorID {
+		if actor.GetActorTemplateNamespace() == nsObj.Name && actor.GetMetadata().GetName() == actorID {
 			myActors = append(myActors, actor)
 		}
 	}
@@ -291,8 +291,8 @@ func createActor(ctx context.Context, t *testing.T, clients *e2e.Clients, nsObj 
 	}
 
 	actor := myActors[0]
-	if actor.GetActorId() != actorID {
-		t.Errorf("expected actor ID %s, got %s", actorID, actor.GetActorId())
+	if actor.GetMetadata().GetName() != actorID {
+		t.Errorf("expected actor ID %s, got %s", actorID, actor.GetMetadata().GetName())
 	}
 	if actor.GetActorTemplateName() != at.Name {
 		t.Errorf("expected actor template name %s, got %s", at.Name, actor.GetActorTemplateName())

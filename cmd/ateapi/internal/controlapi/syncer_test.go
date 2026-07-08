@@ -235,9 +235,9 @@ func TestSyncer_DeleteBoundWorker_ClearsActor(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("worker row not materialised: %v", err)
 	}
-	actorID := "actor-orphan"
-	if err := persistence.CreateActor(ctx, &ateapipb.Actor{
-		ActorId: actorID, Atespace: "team-orphan", ActorTemplateNamespace: ns, ActorTemplateName: "tmpl",
+	actorName := "actor-orphan"
+	if _, err := persistence.CreateActor(ctx, &ateapipb.Actor{
+		Metadata: &ateapipb.ResourceMetadata{Name: actorName, Atespace: "team-orphan"}, ActorTemplateNamespace: ns, ActorTemplateName: "tmpl",
 		Status:            ateapipb.Actor_STATUS_RUNNING,
 		AteomPodNamespace: ns, AteomPodName: pod, AteomPodIp: ip,
 		InProgressSnapshot: "gs://snapshots/partial",
@@ -258,7 +258,7 @@ func TestSyncer_DeleteBoundWorker_ClearsActor(t *testing.T) {
 			Name:      "tmpl",
 		},
 		Actor: &ateapipb.ActorRef{
-			Name:     actorID,
+			Name:     actorName,
 			Atespace: "team-orphan",
 		},
 	}
@@ -271,7 +271,7 @@ func TestSyncer_DeleteBoundWorker_ClearsActor(t *testing.T) {
 	}
 	var got *ateapipb.Actor
 	if err := wait.PollUntilContextTimeout(ctx, 50*time.Millisecond, 2*time.Second, true, func(c context.Context) (bool, error) {
-		a, gerr := persistence.GetActor(c, "team-orphan", actorID)
+		a, gerr := persistence.GetActor(c, "team-orphan", actorName)
 		if gerr != nil {
 			return false, gerr
 		}

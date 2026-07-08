@@ -26,12 +26,10 @@ func TestPrintActorsTo_Table(t *testing.T) {
 	var buf bytes.Buffer
 	actors := []*ateapipb.Actor{
 		{
-			ActorId:                "id-1",
-			Atespace:               "team-a",
+			Metadata:               &ateapipb.ResourceMetadata{Name: "id-1", Atespace: "team-a", Version: 2},
 			ActorTemplateNamespace: "default",
 			ActorTemplateName:      "template-1",
 			Status:                 ateapipb.Actor_STATUS_RUNNING,
-			Version:                2,
 			AteomPodNamespace:      "worker-ns",
 			AteomPodName:           "pod-1",
 			AteomPodIp:             "1.2.3.4",
@@ -55,8 +53,7 @@ func TestPrintActorsTo_JSON(t *testing.T) {
 	var buf bytes.Buffer
 	actors := []*ateapipb.Actor{
 		{
-			ActorId: "id-1",
-			Version: 2,
+			Metadata: &ateapipb.ResourceMetadata{Name: "id-1", Version: 2},
 		},
 	}
 
@@ -68,8 +65,10 @@ func TestPrintActorsTo_JSON(t *testing.T) {
 	expected := `{
   "actors": [
     {
-      "actorId": "id-1",
-      "version": "2"
+      "metadata": {
+        "name": "id-1",
+        "version": "2"
+      }
     }
   ]
 }
@@ -83,8 +82,7 @@ func TestPrintActorsTo_YAML(t *testing.T) {
 	var buf bytes.Buffer
 	actors := []*ateapipb.Actor{
 		{
-			ActorId: "id-1",
-			Version: 2,
+			Metadata: &ateapipb.ResourceMetadata{Name: "id-1", Version: 2},
 		},
 	}
 
@@ -94,8 +92,9 @@ func TestPrintActorsTo_YAML(t *testing.T) {
 	output := buf.String()
 
 	expected := `actors:
-- actorId: id-1
-  version: "2"
+- metadata:
+    name: id-1
+    version: "2"
 `
 	if diff := cmp.Diff(expected, output); diff != "" {
 		t.Errorf("output mismatch (-want +got):\n%s", diff)
@@ -106,22 +105,19 @@ func TestPrintActorsTo_Table_Sorted(t *testing.T) {
 	var buf bytes.Buffer
 	actors := []*ateapipb.Actor{
 		{
-			ActorId:                "zebra",
-			Atespace:               "team-b",
+			Metadata:               &ateapipb.ResourceMetadata{Name: "zebra", Atespace: "team-b"},
 			ActorTemplateNamespace: "default",
 			ActorTemplateName:      "template-1",
 			Status:                 ateapipb.Actor_STATUS_SUSPENDED,
 		},
 		{
-			ActorId:                "alpha",
-			Atespace:               "team-a",
+			Metadata:               &ateapipb.ResourceMetadata{Name: "alpha", Atespace: "team-a"},
 			ActorTemplateNamespace: "default",
 			ActorTemplateName:      "template-1",
 			Status:                 ateapipb.Actor_STATUS_RUNNING,
 		},
 		{
-			ActorId:                "beta",
-			Atespace:               "team-a",
+			Metadata:               &ateapipb.ResourceMetadata{Name: "beta", Atespace: "team-a"},
 			ActorTemplateNamespace: "other",
 			ActorTemplateName:      "template-2",
 			Status:                 ateapipb.Actor_STATUS_SUSPENDED,
@@ -251,7 +247,7 @@ func TestPrintWorkersTo_Invalid(t *testing.T) {
 func TestPrintAtespacesTo_Table(t *testing.T) {
 	var buf bytes.Buffer
 	atespaces := []*ateapipb.Atespace{
-		{Name: "team-a"},
+		{Metadata: &ateapipb.ResourceMetadata{Name: "team-a"}},
 	}
 
 	if err := PrintAtespacesTo(&buf, atespaces, "table"); err != nil {
@@ -269,7 +265,7 @@ team-a
 func TestPrintAtespacesTo_JSON(t *testing.T) {
 	var buf bytes.Buffer
 	atespaces := []*ateapipb.Atespace{
-		{Name: "team-a"},
+		{Metadata: &ateapipb.ResourceMetadata{Name: "team-a"}},
 	}
 
 	if err := PrintAtespacesTo(&buf, atespaces, "json"); err != nil {
@@ -279,7 +275,9 @@ func TestPrintAtespacesTo_JSON(t *testing.T) {
 	expected := `{
   "atespaces": [
     {
-      "name": "team-a"
+      "metadata": {
+        "name": "team-a"
+      }
     }
   ]
 }
@@ -292,7 +290,7 @@ func TestPrintAtespacesTo_JSON(t *testing.T) {
 func TestPrintAtespacesTo_YAML(t *testing.T) {
 	var buf bytes.Buffer
 	atespaces := []*ateapipb.Atespace{
-		{Name: "team-a"},
+		{Metadata: &ateapipb.ResourceMetadata{Name: "team-a"}},
 	}
 
 	if err := PrintAtespacesTo(&buf, atespaces, "yaml"); err != nil {
@@ -300,7 +298,8 @@ func TestPrintAtespacesTo_YAML(t *testing.T) {
 	}
 
 	expected := `atespaces:
-- name: team-a
+- metadata:
+    name: team-a
 `
 	if diff := cmp.Diff(expected, buf.String()); diff != "" {
 		t.Errorf("output mismatch (-want +got):\n%s", diff)
@@ -310,9 +309,9 @@ func TestPrintAtespacesTo_YAML(t *testing.T) {
 func TestPrintAtespacesTo_Table_Sorted(t *testing.T) {
 	var buf bytes.Buffer
 	atespaces := []*ateapipb.Atespace{
-		{Name: "team-c"},
-		{Name: "team-a"},
-		{Name: "team-b"},
+		{Metadata: &ateapipb.ResourceMetadata{Name: "team-c"}},
+		{Metadata: &ateapipb.ResourceMetadata{Name: "team-a"}},
+		{Metadata: &ateapipb.ResourceMetadata{Name: "team-b"}},
 	}
 
 	if err := PrintAtespacesTo(&buf, atespaces, "table"); err != nil {

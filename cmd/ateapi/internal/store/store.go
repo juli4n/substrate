@@ -39,24 +39,30 @@ var (
 
 // Interface defines the contract for the persistence layer storing actor state.
 type Interface interface {
-	// Fetches an actor by (atespace, id). Returns ErrNotFound if missing.
-	GetActor(ctx context.Context, atespace, id string) (*ateapipb.Actor, error)
+	// Fetches an actor by (atespace, name). Returns ErrNotFound if missing.
+	GetActor(ctx context.Context, atespace, name string) (*ateapipb.Actor, error)
 
-	// Stores a new actor in suspended state. Returns ErrAlreadyExists if key is taken.
-	CreateActor(ctx context.Context, actor *ateapipb.Actor) error
+	// Stores a new actor in suspended state and returns the stored resource with
+	// server-assigned metadata (uid, version, timestamps). The input is not
+	// mutated. Returns ErrAlreadyExists if key is taken.
+	CreateActor(ctx context.Context, actor *ateapipb.Actor) (*ateapipb.Actor, error)
 
-	// Updates actor state with optimistic concurrency check. Returns ErrNotFound if missing, or ErrPersistenceRetry on version mismatch.
-	UpdateActor(ctx context.Context, actor *ateapipb.Actor, expectedVersion int64) error
+	// Updates actor state with optimistic concurrency check and returns the stored
+	// resource with advanced metadata (version, update_time). The input is not
+	// mutated. Returns ErrNotFound if missing, or ErrPersistenceRetry on version mismatch.
+	UpdateActor(ctx context.Context, actor *ateapipb.Actor, expectedVersion int64) (*ateapipb.Actor, error)
 
 	// Removes an actor. Returns ErrNotFound if missing, or ErrFailedPrecondition if not suspended.
-	DeleteActor(ctx context.Context, atespace, id string) error
+	DeleteActor(ctx context.Context, atespace, name string) error
 
 	// Lists actors in the given atespace (scoped scan), or across ALL atespaces if atespace is
 	// empty. Returns a page of actors and a next page token.
 	ListActors(ctx context.Context, atespace string, pageSize int32, pageToken string) ([]*ateapipb.Actor, string, error)
 
-	// Stores a new atespace. Returns ErrAlreadyExists if the name is taken.
-	CreateAtespace(ctx context.Context, atespace *ateapipb.Atespace) error
+	// Stores a new atespace and returns the stored resource with server-assigned
+	// metadata (uid, version, timestamps). The input is not mutated. Returns
+	// ErrAlreadyExists if the name is taken.
+	CreateAtespace(ctx context.Context, atespace *ateapipb.Atespace) (*ateapipb.Atespace, error)
 
 	// Fetches an atespace by name. Returns ErrNotFound if missing.
 	GetAtespace(ctx context.Context, name string) (*ateapipb.Atespace, error)

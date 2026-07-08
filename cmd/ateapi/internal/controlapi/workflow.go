@@ -148,17 +148,17 @@ func NewActorWorkflow(
 }
 
 // ResumeActor executes the workflow to resume a suspended actor. Idempotent.
-func (w *ActorWorkflow) ResumeActor(ctx context.Context, atespace, id string, boot bool) (*ateapipb.Actor, error) {
+func (w *ActorWorkflow) ResumeActor(ctx context.Context, atespace, name string, boot bool) (*ateapipb.Actor, error) {
 	input := &ResumeInput{
-		ActorID:  id,
-		Atespace: atespace,
-		Boot:     boot,
+		ActorName: name,
+		Atespace:  atespace,
+		Boot:      boot,
 	}
 	state := &ResumeState{}
 
 	// Acquire lock and get the timeout context for the workflow
 	// Lock TTL is 30 seconds, with 2 seconds padding for workflow timeout
-	ctx, releaseLock, err := w.acquireActorLock(ctx, id, 30*time.Second, 2*time.Second)
+	ctx, releaseLock, err := w.acquireActorLock(ctx, name, 30*time.Second, 2*time.Second)
 	if err != nil {
 		return nil, err
 	}
@@ -179,16 +179,16 @@ func (w *ActorWorkflow) ResumeActor(ctx context.Context, atespace, id string, bo
 }
 
 // SuspendActor executes the workflow to suspend a running actor. Idempotent.
-func (w *ActorWorkflow) SuspendActor(ctx context.Context, atespace, id string) (*ateapipb.Actor, error) {
+func (w *ActorWorkflow) SuspendActor(ctx context.Context, atespace, name string) (*ateapipb.Actor, error) {
 	input := &SuspendInput{
-		ActorID:  id,
-		Atespace: atespace,
+		ActorName: name,
+		Atespace:  atespace,
 	}
 	state := &SuspendState{}
 
 	// Acquire lock and get the timeout context for the workflow
 	// Lock TTL is 30 seconds, with 2 seconds padding for workflow timeout
-	ctx, releaseLock, err := w.acquireActorLock(ctx, id, 30*time.Second, 2*time.Second)
+	ctx, releaseLock, err := w.acquireActorLock(ctx, name, 30*time.Second, 2*time.Second)
 	if err != nil {
 		return nil, err
 	}
@@ -209,16 +209,16 @@ func (w *ActorWorkflow) SuspendActor(ctx context.Context, atespace, id string) (
 }
 
 // PauseActor executes the workflow to pause a running actor. Idempotent.
-func (w *ActorWorkflow) PauseActor(ctx context.Context, atespace, id string) (*ateapipb.Actor, error) {
+func (w *ActorWorkflow) PauseActor(ctx context.Context, atespace, name string) (*ateapipb.Actor, error) {
 	input := &PauseInput{
-		ActorID:  id,
-		Atespace: atespace,
+		ActorName: name,
+		Atespace:  atespace,
 	}
 	state := &PauseState{}
 
 	// Acquire lock and get the timeout context for the workflow
 	// Lock TTL is 30 seconds, with 2 seconds padding for workflow timeout
-	ctx, releaseLock, err := w.acquireActorLock(ctx, id, 30*time.Second, 2*time.Second)
+	ctx, releaseLock, err := w.acquireActorLock(ctx, name, 30*time.Second, 2*time.Second)
 	if err != nil {
 		return nil, err
 	}
@@ -238,8 +238,8 @@ func (w *ActorWorkflow) PauseActor(ctx context.Context, atespace, id string) (*a
 	return state.Actor, nil
 }
 
-func (w *ActorWorkflow) acquireActorLock(ctx context.Context, id string, ttl time.Duration, padding time.Duration) (context.Context, func(), error) {
-	lockKey := "lock:actor:" + id
+func (w *ActorWorkflow) acquireActorLock(ctx context.Context, name string, ttl time.Duration, padding time.Duration) (context.Context, func(), error) {
+	lockKey := "lock:actor:" + name
 	lockValue := uuid.New().String()
 
 	// Create a child context for the workflow that expires BEFORE the lock

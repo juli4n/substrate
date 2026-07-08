@@ -15,7 +15,7 @@
 // Package ateredis is an ate storage backend built on Redis.
 //
 // Actors are stored in keys of the form
-// `actor:<atespace>:<actor-id>`.  They are
+// `actor:<atespace>:<name>`.  They are
 // stored as DBActor JSON-serialized objects, which lets us manipulate them from
 // Redis lua.
 //
@@ -55,9 +55,11 @@ import (
 
 	"github.com/agent-substrate/substrate/cmd/ateapi/internal/store"
 	"github.com/agent-substrate/substrate/pkg/proto/ateapipb"
+	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 type workerPubSubMsg struct {
@@ -86,8 +88,8 @@ func NewPersistence(redisClient *redis.ClusterClient) *Persistence {
 	}
 }
 
-func actorDBKey(atespace, id string) string {
-	return "actor:" + atespace + ":" + id
+func actorDBKey(atespace, name string) string {
+	return "actor:" + atespace + ":" + name
 }
 
 // actorScanPattern returns the SCAN match pattern for listing actors. An empty
@@ -104,20 +106,25 @@ func atespaceDBKey(name string) string {
 	return "atespace:" + name
 }
 
-func (s *Persistence) CreateAtespace(ctx context.Context, atespace *ateapipb.Atespace) error {
-	dbKey := atespaceDBKey(atespace.GetName())
-	dbBytes, err := protojson.Marshal(atespace)
+func (s *Persistence) CreateAtespace(ctx context.Context, atespace *ateapipb.Atespace) (*ateapipb.Atespace, error) {
+	dbKey := atespaceDBKey(atespace.GetMetadata().GetName())
+
+	dbAtespace := proto.Clone(atespace).(*ateapipb.Atespace)
+	// Atespace is global-scoped: identity is the name alone (atespace stays empty).
+	dbAtespace.Metadata = newCreateMetadata("", atespace.GetMetadata().GetName())
+
+	dbBytes, err := protojson.Marshal(dbAtespace)
 	if err != nil {
-		return fmt.Errorf("in protojson.Marshal: %w", err)
+		return nil, fmt.Errorf("in protojson.Marshal: %w", err)
 	}
 	ok, err := s.rdb.SetNX(ctx, dbKey, dbBytes, 0).Result()
 	if err != nil {
-		return fmt.Errorf("while executing redis set: %w", err)
+		return nil, fmt.Errorf("while executing redis set: %w", err)
 	}
 	if !ok {
-		return store.ErrAlreadyExists
+		return nil, store.ErrAlreadyExists
 	}
-	return nil
+	return dbAtespace, nil
 }
 
 func (s *Persistence) GetAtespace(ctx context.Context, name string) (*ateapipb.Atespace, error) {
@@ -133,7 +140,7 @@ func (s *Persistence) GetAtespace(ctx context.Context, name string) (*ateapipb.A
 	if err := protojson.Unmarshal(dbBytes, atespace); err != nil {
 		return nil, fmt.Errorf("while unmarshaling atespace: %w", err)
 	}
-	if atespace.GetName() != name {
+	if atespace.GetMetadata().GetName() != name {
 		return nil, fmt.Errorf("(impossible) mismatch between stored name and key %q", dbKey)
 	}
 	return atespace, nil
@@ -313,8 +320,8 @@ func (s *Persistence) DebugClearAll(ctx context.Context) error {
 	return err
 }
 
-func (s *Persistence) GetActor(ctx context.Context, atespace, id string) (*ateapipb.Actor, error) {
-	dbKey := actorDBKey(atespace, id)
+func (s *Persistence) GetActor(ctx context.Context, atespace, name string) (*ateapipb.Actor, error) {
+	dbKey := actorDBKey(atespace, name)
 
 	dbActorBytes, err := s.rdb.Get(ctx, dbKey).Bytes()
 	if err != nil {
@@ -329,35 +336,35 @@ func (s *Persistence) GetActor(ctx context.Context, atespace, id string) (*ateap
 		return nil, fmt.Errorf("while unmarshaling actor: %w", err)
 	}
 
-	if actor.GetActorId() != id || actor.GetAtespace() != atespace {
-		return nil, fmt.Errorf("(impossible) mismatch between stored id/atespace and key")
+	if actor.GetMetadata().GetName() != name || actor.GetMetadata().GetAtespace() != atespace {
+		return nil, fmt.Errorf("(impossible) mismatch between stored name/atespace and key")
 	}
 
 	return actor, nil
 }
 
-func (s *Persistence) CreateActor(ctx context.Context, actor *ateapipb.Actor) error {
-	dbKey := actorDBKey(actor.GetAtespace(), actor.GetActorId())
+func (s *Persistence) CreateActor(ctx context.Context, actor *ateapipb.Actor) (*ateapipb.Actor, error) {
+	dbKey := actorDBKey(actor.GetMetadata().GetAtespace(), actor.GetMetadata().GetName())
 
-	// Clone because we will update the version field, and we don't want to
-	// stomp the caller's copy.
+	// Clone so we don't stomp the caller's copy, then attach fresh server-owned
+	// metadata carrying the caller-specified identity.
 	dbActor := proto.Clone(actor).(*ateapipb.Actor)
-	dbActor.Version = 1
+	dbActor.Metadata = newCreateMetadata(actor.GetMetadata().GetAtespace(), actor.GetMetadata().GetName())
 
 	dbActorBytes, err := protojson.Marshal(dbActor)
 	if err != nil {
-		return fmt.Errorf("in protojson.Marshal: %w", err)
+		return nil, fmt.Errorf("in protojson.Marshal: %w", err)
 	}
 
 	ok, err := s.rdb.SetNX(ctx, dbKey, dbActorBytes, 0).Result()
 	if err != nil {
-		return fmt.Errorf("while executing redis set: %w", err)
+		return nil, fmt.Errorf("while executing redis set: %w", err)
 	}
 	if !ok {
-		return store.ErrAlreadyExists
+		return nil, store.ErrAlreadyExists
 	}
 
-	return nil
+	return dbActor, nil
 }
 
 func (s *Persistence) CreateWorker(ctx context.Context, worker *ateapipb.Worker) error {
@@ -481,8 +488,8 @@ func (s *Persistence) DeleteWorker(ctx context.Context, namespace, pool, pod str
 	return nil
 }
 
-func (s *Persistence) DeleteActor(ctx context.Context, atespace, id string) error {
-	dbKey := actorDBKey(atespace, id)
+func (s *Persistence) DeleteActor(ctx context.Context, atespace, name string) error {
+	dbKey := actorDBKey(atespace, name)
 	err := s.rdb.Watch(ctx, func(tx *redis.Tx) error {
 		currentVal, err := tx.Get(ctx, dbKey).Bytes()
 		if err != nil {
@@ -519,8 +526,8 @@ func (s *Persistence) DeleteActor(ctx context.Context, atespace, id string) erro
 	return nil
 }
 
-func (s *Persistence) UpdateActor(ctx context.Context, actor *ateapipb.Actor, expectedVersion int64) error {
-	dbKey := actorDBKey(actor.GetAtespace(), actor.GetActorId())
+func (s *Persistence) UpdateActor(ctx context.Context, actor *ateapipb.Actor, expectedVersion int64) (*ateapipb.Actor, error) {
+	dbKey := actorDBKey(actor.GetMetadata().GetAtespace(), actor.GetMetadata().GetName())
 
 	// Clone because we will update the version field, and we don't want to
 	// stomp the caller's copy.
@@ -540,14 +547,13 @@ func (s *Persistence) UpdateActor(ctx context.Context, actor *ateapipb.Actor, ex
 			return fmt.Errorf("in protojson.Unmarshal: %w", err)
 		}
 
-		if currentActor.GetVersion() != expectedVersion {
+		if currentActor.GetMetadata().GetVersion() != expectedVersion {
 			return store.ErrPersistenceRetry
 		}
-		dbActor.Version = currentActor.GetVersion() + 1
-		if currentActor.GetActorId() != dbActor.GetActorId() {
-			return fmt.Errorf("actor_id is immutable")
+		if currentActor.GetMetadata().GetName() != dbActor.GetMetadata().GetName() {
+			return fmt.Errorf("name is immutable")
 		}
-		if currentActor.GetAtespace() != dbActor.GetAtespace() {
+		if currentActor.GetMetadata().GetAtespace() != dbActor.GetMetadata().GetAtespace() {
 			return fmt.Errorf("atespace is immutable")
 		}
 		if currentActor.GetActorTemplateNamespace() != dbActor.GetActorTemplateNamespace() {
@@ -556,6 +562,8 @@ func (s *Persistence) UpdateActor(ctx context.Context, actor *ateapipb.Actor, ex
 		if currentActor.GetActorTemplateName() != dbActor.GetActorTemplateName() {
 			return fmt.Errorf("actor_template_name is immutable")
 		}
+		// The stored metadata is authoritative; derive the next metadata from it.
+		dbActor.Metadata = newUpdateMetadata(currentActor.GetMetadata())
 
 		newVal, err := protojson.Marshal(dbActor)
 		if err != nil {
@@ -571,13 +579,14 @@ func (s *Persistence) UpdateActor(ctx context.Context, actor *ateapipb.Actor, ex
 
 	if err != nil {
 		if errors.Is(err, store.ErrPersistenceRetry) || errors.Is(err, redis.TxFailedErr) {
-			return store.ErrPersistenceRetry
+			return nil, store.ErrPersistenceRetry
 		}
-		return fmt.Errorf("while executing update actor transaction: %w", err)
+		return nil, fmt.Errorf("while executing update actor transaction: %w", err)
 	}
 
-	actor.Version = dbActor.Version
-	return nil
+	// dbActor is the persisted state (advanced version and update_time). The
+	// caller's input is left unmodified.
+	return dbActor, nil
 }
 
 func (s *Persistence) ListWorkers(ctx context.Context) ([]*ateapipb.Worker, error) {
@@ -817,4 +826,23 @@ func (s *Persistence) ReleaseLock(ctx context.Context, key string, value string)
 		return fmt.Errorf("while releasing lock for %q with value %q: %w", key, value, err)
 	}
 	return nil
+}
+
+func newCreateMetadata(atespace, name string) *ateapipb.ResourceMetadata {
+	now := timestamppb.Now()
+	return &ateapipb.ResourceMetadata{
+		Atespace:   atespace,
+		Name:       name,
+		Uid:        uuid.NewString(),
+		Version:    1,
+		CreateTime: now,
+		UpdateTime: now,
+	}
+}
+
+func newUpdateMetadata(current *ateapipb.ResourceMetadata) *ateapipb.ResourceMetadata {
+	next := proto.Clone(current).(*ateapipb.ResourceMetadata)
+	next.Version = current.GetVersion() + 1
+	next.UpdateTime = timestamppb.Now()
+	return next
 }

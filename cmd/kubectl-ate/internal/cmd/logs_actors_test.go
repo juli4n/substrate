@@ -192,7 +192,7 @@ func TestLogsActorRunner_Run_OneShotSuccess(t *testing.T) {
 			}
 			return &ateapipb.GetActorResponse{
 				Actor: &ateapipb.Actor{
-					ActorId:           actorID,
+					Metadata:          &ateapipb.ResourceMetadata{Name: actorID},
 					AteomPodName:      podName,
 					AteomPodNamespace: namespace,
 					Status:            ateapipb.Actor_STATUS_RUNNING,
@@ -246,8 +246,8 @@ func TestLogsActorRunner_Run_OneShot_ActorNotRunning(t *testing.T) {
 		GetActorFunc: func(ctx context.Context, in *ateapipb.GetActorRequest, opts ...grpc.CallOption) (*ateapipb.GetActorResponse, error) {
 			return &ateapipb.GetActorResponse{
 				Actor: &ateapipb.Actor{
-					ActorId: actorID,
-					Status:  ateapipb.Actor_STATUS_SUSPENDED, // not running
+					Metadata: &ateapipb.ResourceMetadata{Name: actorID},
+					Status:   ateapipb.Actor_STATUS_SUSPENDED, // not running
 				},
 			}, nil
 		},
@@ -301,8 +301,8 @@ func TestLogsActorRunner_Run_Follow_SuspendedToRunning(t *testing.T) {
 				// First call: suspended
 				return &ateapipb.GetActorResponse{
 					Actor: &ateapipb.Actor{
-						ActorId: actorID,
-						Status:  ateapipb.Actor_STATUS_SUSPENDED,
+						Metadata: &ateapipb.ResourceMetadata{Name: actorID},
+						Status:   ateapipb.Actor_STATUS_SUSPENDED,
 					},
 				}, nil
 			}
@@ -310,7 +310,7 @@ func TestLogsActorRunner_Run_Follow_SuspendedToRunning(t *testing.T) {
 			// Subsequent calls: running
 			return &ateapipb.GetActorResponse{
 				Actor: &ateapipb.Actor{
-					ActorId:           actorID,
+					Metadata:          &ateapipb.ResourceMetadata{Name: actorID},
 					AteomPodName:      podName,
 					AteomPodNamespace: namespace,
 					Status:            ateapipb.Actor_STATUS_RUNNING,
@@ -437,7 +437,7 @@ func TestLogsActorRunner_Run_Follow_ActorMigration(t *testing.T) {
 				// 1. Initial call for stream 1: pod-1
 				return &ateapipb.GetActorResponse{
 					Actor: &ateapipb.Actor{
-						ActorId:           actorID,
+						Metadata:          &ateapipb.ResourceMetadata{Name: actorID},
 						AteomPodName:      "pod-1",
 						AteomPodNamespace: "ns",
 						Status:            ateapipb.Actor_STATUS_RUNNING,
@@ -455,7 +455,7 @@ func TestLogsActorRunner_Run_Follow_ActorMigration(t *testing.T) {
 
 			return &ateapipb.GetActorResponse{
 				Actor: &ateapipb.Actor{
-					ActorId:           actorID,
+					Metadata:          &ateapipb.ResourceMetadata{Name: actorID},
 					AteomPodName:      "pod-2",
 					AteomPodNamespace: "ns",
 					Status:            ateapipb.Actor_STATUS_RUNNING,
@@ -550,7 +550,7 @@ func TestLogsActorRunner_Run_Follow_ActorSuspendedMidStream(t *testing.T) {
 			if getActorCalls == 1 {
 				return &ateapipb.GetActorResponse{
 					Actor: &ateapipb.Actor{
-						ActorId:           actorID,
+						Metadata:          &ateapipb.ResourceMetadata{Name: actorID},
 						AteomPodName:      "pod-1",
 						AteomPodNamespace: "ns",
 						Status:            ateapipb.Actor_STATUS_RUNNING,
@@ -568,8 +568,8 @@ func TestLogsActorRunner_Run_Follow_ActorSuspendedMidStream(t *testing.T) {
 				}
 				return &ateapipb.GetActorResponse{
 					Actor: &ateapipb.Actor{
-						ActorId: actorID,
-						Status:  ateapipb.Actor_STATUS_SUSPENDED,
+						Metadata: &ateapipb.ResourceMetadata{Name: actorID},
+						Status:   ateapipb.Actor_STATUS_SUSPENDED,
 					},
 				}, nil
 			}
@@ -578,8 +578,8 @@ func TestLogsActorRunner_Run_Follow_ActorSuspendedMidStream(t *testing.T) {
 			if getActorCalls == 3 {
 				return &ateapipb.GetActorResponse{
 					Actor: &ateapipb.Actor{
-						ActorId: actorID,
-						Status:  ateapipb.Actor_STATUS_SUSPENDED,
+						Metadata: &ateapipb.ResourceMetadata{Name: actorID},
+						Status:   ateapipb.Actor_STATUS_SUSPENDED,
 					},
 				}, nil
 			}
@@ -587,7 +587,7 @@ func TestLogsActorRunner_Run_Follow_ActorSuspendedMidStream(t *testing.T) {
 			// 4. Subsequent loop reconnection call: running again on pod-1
 			return &ateapipb.GetActorResponse{
 				Actor: &ateapipb.Actor{
-					ActorId:           actorID,
+					Metadata:          &ateapipb.ResourceMetadata{Name: actorID},
 					AteomPodName:      "pod-1",
 					AteomPodNamespace: "ns",
 					Status:            ateapipb.Actor_STATUS_RUNNING,

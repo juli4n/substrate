@@ -50,31 +50,27 @@ func (s *Service) CreateActor(ctx context.Context, req *ateapipb.CreateActorRequ
 		return nil, status.Errorf(codes.FailedPrecondition, "Atespace %s not found", req.GetActorRef().GetAtespace())
 	}
 
-	id := req.GetActorRef().GetName()
+	name := req.GetActorRef().GetName()
 	actor := &ateapipb.Actor{
-		ActorId:                id,
-		Version:                1,
+		Metadata: &ateapipb.ResourceMetadata{
+			Atespace: req.GetActorRef().GetAtespace(),
+			Name:     name,
+		},
 		Status:                 ateapipb.Actor_STATUS_SUSPENDED,
 		ActorTemplateNamespace: req.GetActorTemplateNamespace(),
 		ActorTemplateName:      req.GetActorTemplateName(),
 		WorkerSelector:         req.GetWorkerSelector(),
-		Atespace:               req.GetActorRef().GetAtespace(),
 	}
-	err = s.persistence.CreateActor(ctx, actor)
+	stored, err := s.persistence.CreateActor(ctx, actor)
 	if err != nil {
 		if errors.Is(err, store.ErrAlreadyExists) {
-			return nil, status.Errorf(codes.AlreadyExists, "Actor %s already exists", id)
+			return nil, status.Errorf(codes.AlreadyExists, "Actor %s already exists", name)
 		}
 		return nil, fmt.Errorf("while recording actor: %w", err)
 	}
 
-	storedActor, err := s.persistence.GetActor(ctx, req.GetActorRef().GetAtespace(), id)
-	if err != nil {
-		return nil, fmt.Errorf("while fetching recorded actor from DB: %w", err)
-	}
-
 	return &ateapipb.CreateActorResponse{
-		Actor: storedActor,
+		Actor: stored,
 	}, nil
 }
 
