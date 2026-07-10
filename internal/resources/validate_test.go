@@ -23,6 +23,31 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation/field"
 )
 
+func TestIsValidResourceName(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+		valid bool
+	}{
+		{"valid lowercase", "my-actor-1", true},
+		{"valid single char", "a", true},
+		{"missing name", "", false},
+		{"invalid uppercase", "My-Actor", false},
+		{"invalid start hyphen", "-actor", false},
+		{"valid start number", "1actor", true},
+		{"invalid end hyphen", "actor-", false},
+		{"invalid special chars", "actor@1", false},
+		{"invalid length", strings.Repeat("a", 64), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsValidResourceName(tt.value); got != tt.valid {
+				t.Errorf("IsValidResourceName(%q) = %v, want %v", tt.value, got, tt.valid)
+			}
+		})
+	}
+}
+
 func TestValidateObjectRef(t *testing.T) {
 	tests := []struct {
 		name    string

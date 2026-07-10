@@ -38,6 +38,15 @@ func ValidateResourceName(name string, fldPath *field.Path) field.ErrorList {
 	return errs
 }
 
+// IsValidResourceName reports whether name is a valid Substrate resource name
+// (a DNS-1123 label; see ValidateResourceName for the rules). Use this for
+// internal, non-proto checks where a plain predicate is wanted; to validate a
+// proto request field with structured field-path errors, use
+// ValidateResourceName. Empty is not a valid name.
+func IsValidResourceName(name string) bool {
+	return len(content.IsDNS1123Label(name)) == 0
+}
+
 // ValidateObjectRef checks that the object reference is well-formed and that
 // each of its components is a valid resource name.
 func ValidateObjectRef(ref *ateapipb.ObjectRef, fldPath *field.Path) field.ErrorList {
