@@ -1736,11 +1736,11 @@ func TestUpdateActor_NotFound(t *testing.T) {
 //     tier=a.
 //  2. Makes the fake atelet fail Run, then resumes: the actor gets assigned
 //     to worker-a (the only eligible pool) and the resume fails after the
-//     worker is claimed, leaving worker-a's actor_id set and the actor
+//     worker is claimed, leaving worker-a's actor assignment set and the actor
 //     stuck in RESUMING.
 //  3. Updates the actor's selector to tier=b, making pool-a ineligible.
 //  4. Resumes again; asserts it succeeds onto worker-b, and that worker-a
-//     has been released (actor_id cleared) rather than left dangling.
+//     has been released (actor assignment cleared) rather than left dangling.
 func TestResumeActor_ReleasesStaleWorkerWhenPoolBecomesIneligible(t *testing.T) {
 	ns := namespaceForTest("ns-resume-release-stale")
 	tc := setupTest(t, ns)
@@ -1809,7 +1809,7 @@ func TestResumeActor_ReleasesStaleWorkerWhenPoolBecomesIneligible(t *testing.T) 
 				if wass.Actor != nil {
 					got = wass.Actor.Name
 				}
-				t.Errorf("expected worker-a (now-ineligible pool-a) to be released, got actor_id=%q", got)
+				t.Errorf("expected worker-a (now-ineligible pool-a) to be released, got actor name=%q", got)
 			}
 		case "pool-b":
 			if wass := w.Assignment; wass == nil {
@@ -1819,7 +1819,7 @@ func TestResumeActor_ReleasesStaleWorkerWhenPoolBecomesIneligible(t *testing.T) 
 					t.Errorf("expected worker-b to be claimed by %q, got nil assignment.actor", name)
 				} else {
 					if got := wact.Name; got != name {
-						t.Errorf("expected worker-b to be claimed by %q, got actor_id=%q", name, got)
+						t.Errorf("expected worker-b to be claimed by %q, got actor name=%q", name, got)
 					}
 				}
 			}
