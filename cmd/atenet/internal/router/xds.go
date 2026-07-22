@@ -156,6 +156,7 @@ func (x *XdsServer) UpdateSnapshot() error {
 	clusters := []types.Resource{
 		x.buildCluster(),
 		x.buildDynamicForwardProxyCluster(),
+		x.buildDynamicForwardProxyGrpcCluster(),
 	}
 	if x.otlpHost != "" {
 		clusters = append(clusters, x.buildOtlpCollectorCluster())
@@ -354,6 +355,28 @@ func (x *XdsServer) buildDynamicForwardProxyCluster() *clusterv3.Cluster {
 	}
 }
 
+// buildDynamicForwardProxyGrpcCluster builds a variant of the dynamic
+// forward proxy cluster that speaks HTTP/2 (h2c) to the actor, which gRPC
+// requires. It shares the DNS cache with the plain cluster. Routes select it
+// via the gRPC route matcher so non-gRPC actors keep the HTTP/1.1 upstream
+// path.
+func (x *XdsServer) buildDynamicForwardProxyGrpcCluster() *clusterv3.Cluster {
+	h2Opts, _ := anypb.New(&httpv3.HttpProtocolOptions{
+		UpstreamProtocolOptions: &httpv3.HttpProtocolOptions_ExplicitHttpConfig_{
+			ExplicitHttpConfig: &httpv3.HttpProtocolOptions_ExplicitHttpConfig{
+				ProtocolConfig: &httpv3.HttpProtocolOptions_ExplicitHttpConfig_Http2ProtocolOptions{},
+			},
+		},
+	})
+
+	c := x.buildDynamicForwardProxyCluster()
+	c.Name = "dynamic_forward_proxy_grpc_cluster"
+	c.TypedExtensionProtocolOptions = map[string]*anypb.Any{
+		"envoy.extensions.upstreams.http.v3.HttpProtocolOptions": h2Opts,
+	}
+	return c
+}
+
 func (x *XdsServer) buildRoutes() *routev3.RouteConfiguration {
 	return &routev3.RouteConfiguration{
 		Name: RouteName,
@@ -362,6 +385,35 @@ func (x *XdsServer) buildRoutes() *routev3.RouteConfiguration {
 				Name:    "local_service",
 				Domains: []string{"*"},
 				Routes: []*routev3.Route{
+					// gRPC requests go to the HTTP/2 upstream cluster.
+					// Matched before the catch-all route below. The Grpc
+					// matcher is Envoy's canonical check (POST with
+					// content-type "application/grpc" or "application/grpc+*");
+					// it intentionally excludes "application/grpc-web", which
+					// runs over HTTP/1.1 and is served by the default route.
+					// Timeout 0 disables the per-request timeout so streaming
+					// RPCs can stay open.
+					{
+						Match: &routev3.RouteMatch{
+							PathSpecifier: &routev3.RouteMatch_Prefix{
+								Prefix: "/",
+							},
+							Grpc: &routev3.RouteMatch_GrpcRouteMatchOptions{},
+						},
+						Action: &routev3.Route_Route{
+							Route: &routev3.RouteAction{
+								ClusterSpecifier: &routev3.RouteAction_Cluster{
+									Cluster: "dynamic_forward_proxy_grpc_cluster",
+								},
+								Timeout: durationpb.New(0),
+								// Also disable the per-stream idle timeout
+								// (HCM default: 5m), which would otherwise
+								// reset streaming RPCs that go quiet between
+								// messages.
+								IdleTimeout: durationpb.New(0),
+							},
+						},
+					},
 					{
 						Match: &routev3.RouteMatch{
 							PathSpecifier: &routev3.RouteMatch_Prefix{
@@ -538,6 +590,9 @@ func (x *XdsServer) buildHttpsListener() *listenerv3.Listener {
 			TlsCertificates: []*tlsv3.TlsCertificate{
 				x.buildTlsCertificate(),
 			},
+			// Offer HTTP/2 via ALPN so gRPC-over-TLS clients can negotiate
+			// it; plain HTTP clients fall back to HTTP/1.1.
+			AlpnProtocols: []string{"h2", "http/1.1"},
 		},
 	}
 	tlsConfigAny, _ := anypb.New(tlsConfig)

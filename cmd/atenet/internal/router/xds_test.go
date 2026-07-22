@@ -24,6 +24,7 @@ import (
 	clusterv3 "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
 	listenerv3 "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
 	routev3 "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
+	tlsv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
 	cachev3 "github.com/envoyproxy/go-control-plane/pkg/cache/v3"
 	resourcev3 "github.com/envoyproxy/go-control-plane/pkg/resource/v3"
 )
@@ -54,8 +55,8 @@ func TestXdsServer_UpdateSnapshot(t *testing.T) {
 
 	// Verify clusters generated
 	clustersMap := snap.GetResources(resourcev3.ClusterType)
-	if len(clustersMap) != 2 {
-		t.Errorf("Expected 2 cluster definitions, got %d", len(clustersMap))
+	if len(clustersMap) != 3 {
+		t.Errorf("Expected 3 cluster definitions, got %d", len(clustersMap))
 	}
 
 	if raw, exists := clustersMap["ate-cluster"]; !exists {
@@ -83,6 +84,21 @@ func TestXdsServer_UpdateSnapshot(t *testing.T) {
 		if c.GetName() != "dynamic_forward_proxy_cluster" {
 			t.Errorf("Expected 'dynamic_forward_proxy_cluster', got %s", c.GetName())
 		}
+		// The plain cluster must keep the HTTP/1.1 default so non-gRPC
+		// actors are unaffected.
+		if len(c.GetTypedExtensionProtocolOptions()) != 0 {
+			t.Error("'dynamic_forward_proxy_cluster' should not set upstream protocol options")
+		}
+	}
+
+	if raw, exists := clustersMap["dynamic_forward_proxy_grpc_cluster"]; !exists {
+		t.Error("'dynamic_forward_proxy_grpc_cluster' is missing from clusters")
+	} else {
+		c := raw.(*clusterv3.Cluster)
+		// The gRPC cluster must pin HTTP/2 upstream.
+		if _, ok := c.GetTypedExtensionProtocolOptions()["envoy.extensions.upstreams.http.v3.HttpProtocolOptions"]; !ok {
+			t.Error("'dynamic_forward_proxy_grpc_cluster' is missing HTTP/2 upstream protocol options")
+		}
 	}
 
 	// Verify Virtual Hosts generated inside Route configuration
@@ -108,13 +124,37 @@ func TestXdsServer_UpdateSnapshot(t *testing.T) {
 			t.Errorf("Expected domain '*', got %v", vh.GetDomains())
 		}
 
-		if len(vh.GetRoutes()) != 1 {
-			t.Fatalf("Expected 1 route in fallback VirtualHost, got %d", len(vh.GetRoutes()))
+		if len(vh.GetRoutes()) != 2 {
+			t.Fatalf("Expected 2 routes in VirtualHost, got %d", len(vh.GetRoutes()))
 		}
 
-		fallbackRoute := vh.GetRoutes()[0]
+		// The gRPC route must come first so it wins over the catch-all.
+		grpcRoute := vh.GetRoutes()[0]
+		if grpcRoute.GetMatch().GetGrpc() == nil {
+			t.Error("Expected first route to set the gRPC route matcher")
+		}
+		if grpcRoute.GetRoute().GetCluster() != "dynamic_forward_proxy_grpc_cluster" {
+			t.Errorf("Expected gRPC route cluster 'dynamic_forward_proxy_grpc_cluster', got '%s'", grpcRoute.GetRoute().GetCluster())
+		}
+		if d := grpcRoute.GetRoute().GetTimeout().AsDuration(); d != 0 {
+			t.Errorf("Expected gRPC route timeout 0 (disabled, for streaming), got %v", d)
+		}
+		if it := grpcRoute.GetRoute().GetIdleTimeout(); it == nil || it.AsDuration() != 0 {
+			t.Errorf("Expected gRPC route idle timeout explicitly 0 (disabled, for streaming), got %v", it)
+		}
+
+		fallbackRoute := vh.GetRoutes()[1]
 		if fallbackRoute.GetMatch().GetPrefix() != "/" {
 			t.Errorf("Expected path mapping prefix '/', got '%s'", fallbackRoute.GetMatch().GetPrefix())
+		}
+		if fallbackRoute.GetMatch().GetGrpc() != nil {
+			t.Error("Expected fallback route to not set the gRPC route matcher")
+		}
+		if len(fallbackRoute.GetMatch().GetHeaders()) != 0 {
+			t.Errorf("Expected fallback route to have no header matchers, got %v", fallbackRoute.GetMatch().GetHeaders())
+		}
+		if fallbackRoute.GetRoute().GetCluster() != "dynamic_forward_proxy_cluster" {
+			t.Errorf("Expected fallback route cluster 'dynamic_forward_proxy_cluster', got '%s'", fallbackRoute.GetRoute().GetCluster())
 		}
 	}
 
@@ -177,6 +217,16 @@ func TestXdsServer_UpdateSnapshot_WithHttps(t *testing.T) {
 		ts := fc.GetTransportSocket()
 		if ts.GetName() != "envoy.transport_sockets.tls" {
 			t.Errorf("Expected transport socket 'envoy.transport_sockets.tls', got '%s'", ts.GetName())
+		}
+
+		// Verify ALPN offers h2 so gRPC-over-TLS clients can negotiate HTTP/2
+		tlsCtx := &tlsv3.DownstreamTlsContext{}
+		if err := ts.GetTypedConfig().UnmarshalTo(tlsCtx); err != nil {
+			t.Fatalf("Failed to unmarshal DownstreamTlsContext: %v", err)
+		}
+		alpn := tlsCtx.GetCommonTlsContext().GetAlpnProtocols()
+		if len(alpn) != 2 || alpn[0] != "h2" || alpn[1] != "http/1.1" {
+			t.Errorf("Expected ALPN protocols [h2 http/1.1], got %v", alpn)
 		}
 	}
 }
