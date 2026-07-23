@@ -21,6 +21,7 @@ import (
 	"sort"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
@@ -812,34 +813,6 @@ func TestLock_Close_ReleasesLockImmediately(t *testing.T) {
 	next.Close()
 }
 
-func TestAcquireLock_RenewsUntilClosed(t *testing.T) {
-	mr, s, ctx := setupTest(t)
-
-	key := "test-lock"
-	ttl := 300 * time.Millisecond // renewed every ~100ms; overriding s.lockTTL lets the test avoid waiting out the real lockTTL.
-	s.lockTTL = ttl
-
-	lock, err := s.AcquireLock(ctx, key)
-	if err != nil {
-		t.Fatalf("AcquireLock failed: %v", err)
-	}
-	defer lock.Close()
-
-	// Outlive the original TTL by more than 2x; without renewal the key
-	// would have expired long before this point.
-	time.Sleep(ttl * 3)
-
-	if !mr.Exists(key) {
-		t.Fatal("expected lock to still be held past its original TTL due to renewal")
-	}
-	if _, err := s.AcquireLock(ctx, key); !errors.Is(err, store.ErrLockConflict) {
-		t.Errorf("AcquireLock while renewed lock is held: err = %v, want ErrLockConflict", err)
-	}
-	if err := lock.Context().Err(); err != nil {
-		t.Errorf("lock.Context().Err() = %v, want nil (lease still held)", err)
-	}
-}
-
 func TestLock_Close_CancelsContext(t *testing.T) {
 	_, s, ctx := setupTest(t)
 
@@ -854,83 +827,6 @@ func TestLock_Close_CancelsContext(t *testing.T) {
 	case <-lock.Context().Done():
 	case <-time.After(time.Second):
 		t.Fatal("expected lock.Context() to be cancelled after Close")
-	}
-}
-
-func TestLock_ContextCancelled_OnLeaseLost(t *testing.T) {
-	mr, s, ctx := setupTest(t)
-
-	key := "test-lock"
-	ttl := 300 * time.Millisecond
-	s.lockTTL = ttl
-
-	lock, err := s.AcquireLock(ctx, key)
-	if err != nil {
-		t.Fatalf("AcquireLock failed: %v", err)
-	}
-	defer lock.Close()
-
-	// Simulate the lease being lost out from under the renewal loop.
-	mr.Del(key)
-
-	select {
-	case <-lock.Context().Done():
-	case <-time.After(time.Second):
-		t.Fatal("expected lock.Context() to be cancelled once renewal detects the lease is lost")
-	}
-}
-
-func TestAcquireLock_RenewalRecoversFromTransientError(t *testing.T) {
-	mr, s, ctx := setupTest(t)
-
-	key := "test-lock"
-	ttl := 300 * time.Millisecond // renewed every ~100ms, retried every ~30ms on error.
-	s.lockTTL = ttl
-
-	lock, err := s.AcquireLock(ctx, key)
-	if err != nil {
-		t.Fatalf("AcquireLock failed: %v", err)
-	}
-	defer lock.Close()
-
-	// Simulate a Redis blip that clears well before the key's TTL window
-	// (since the last successful renewal) elapses. A single failed renewal
-	// attempt should not be treated as lease loss.
-	mr.injectTransientError(130 * time.Millisecond) // spans a couple of ~30ms retries
-
-	// Give renewal time to notice the error cleared and catch back up, well
-	// past the original ttl.
-	time.Sleep(ttl * 2)
-
-	if err := lock.Context().Err(); err != nil {
-		t.Errorf("lock.Context().Err() = %v, want nil (renewal should have recovered from the transient error)", err)
-	}
-	if !mr.Exists(key) {
-		t.Errorf("expected lock to still be held after recovering from a transient renewal error")
-	}
-}
-
-func TestAcquireLock_RenewalGivesUpOncePersistentErrorOutlastsTTL(t *testing.T) {
-	mr, s, ctx := setupTest(t)
-
-	key := "test-lock"
-	ttl := 300 * time.Millisecond
-	s.lockTTL = ttl
-
-	lock, err := s.AcquireLock(ctx, key)
-	if err != nil {
-		t.Fatalf("AcquireLock failed: %v", err)
-	}
-	defer lock.Close()
-
-	// A Redis outage that outlasts the key's TTL window: retrying can no
-	// longer help because the underlying key may have already expired.
-	mr.injectError()
-
-	select {
-	case <-lock.Context().Done():
-	case <-time.After(2 * time.Second):
-		t.Fatal("expected lock.Context() to be cancelled once the persistent error outlasts the TTL window")
 	}
 }
 
@@ -963,6 +859,55 @@ func TestLock_Close_ReleasesEvenAfterParentContextCancelled(t *testing.T) {
 	if mr.Exists(key) {
 		t.Errorf("expected Close to release the lock even though the parent context was already cancelled")
 	}
+}
+
+func TestAcquireLock_ExpiresAndIsReacquirableAfterHolderCrashes(t *testing.T) {
+	mr, s, _ := setupTest(t)
+
+	key := "test-lock"
+	ttl := 300 * time.Millisecond
+	s.lockTTL = ttl
+
+	parentCtx, parentCancel := context.WithCancel(context.Background())
+	lock, err := s.AcquireLock(parentCtx, key)
+	if err != nil {
+		t.Fatalf("AcquireLock failed: %v", err)
+	}
+
+	// Simulate a hard crash: the holder disappears without ever calling
+	// Close (e.g. the process is killed), so the key is never explicitly
+	// released and is left to expire on its own TTL. Cancelling the parent
+	// context stops the renewal loop the same way process death would,
+	// without releasing the key the way Close does.
+	parentCancel()
+	select {
+	case <-lock.Context().Done():
+	case <-time.After(time.Second):
+		t.Fatal("expected lock.Context() to be cancelled once the parent context is cancelled")
+	}
+
+	if !mr.Exists(key) {
+		t.Fatal("expected the key to still exist right after the crash; only Close deletes it")
+	}
+	if _, err := s.AcquireLock(context.Background(), key); !errors.Is(err, store.ErrLockConflict) {
+		t.Errorf("AcquireLock before TTL expiry: err = %v, want ErrLockConflict", err)
+	}
+
+	// Simulate real time passing with no renewer left alive, until the key's
+	// actual Redis TTL elapses. miniredis's TTLs are purely virtual --
+	// stored durations decremented only by FastForward, never by wall-clock
+	// time -- so a real time.Sleep here would not expire the key at all.
+	mr.FastForward(ttl + time.Second)
+
+	if mr.Exists(key) {
+		t.Fatal("expected the key to have expired in Redis once its TTL elapsed")
+	}
+
+	newOwner, err := s.AcquireLock(context.Background(), key)
+	if err != nil {
+		t.Fatalf("AcquireLock after crash + TTL expiry failed: %v", err)
+	}
+	defer newOwner.Close()
 }
 
 func TestLock_Close_DoesNotStealALockReacquiredAfterLeaseLoss(t *testing.T) {
@@ -1011,6 +956,144 @@ func TestLock_Close_Idempotent(t *testing.T) {
 
 	lock.Close()
 	lock.Close() // must not panic or double-release.
+}
+
+func TestRenewDeadlineFractionLeavesRetryHeadroom(t *testing.T) {
+	const minRetries = 2
+
+	intervalFraction := 1.0 / renewIntervalDivisor
+	retryPeriodFraction := 1.0 / renewRetryPeriodDivisor
+	floor := intervalFraction + minRetries*retryPeriodFraction
+
+	if renewDeadlineFraction <= floor {
+		t.Fatalf("renewDeadlineFraction (%v) must exceed intervalFraction + %d*retryPeriodFraction (%v) to leave room for %d retries; "+
+			"at or below intervalFraction (%v) alone, the very first renewal attempt would already find the deadline elapsed",
+			renewDeadlineFraction, minRetries, floor, minRetries, intervalFraction)
+	}
+}
+
+func TestAcquireLock_RenewsUntilClosed(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		mock := &mockRedisClient{SetNXFunc: acquires, EvalShaFunc: renews}
+		s := &Persistence{rdb: mock, lockTTL: defaultLockTTL}
+
+		lock, err := s.AcquireLock(t.Context(), "test-lock")
+		if err != nil {
+			t.Fatalf("AcquireLock failed: %v", err)
+		}
+		defer lock.Close()
+
+		time.Sleep(3 * defaultLockTTL)
+		synctest.Wait()
+
+		if err := lock.Context().Err(); err != nil {
+			t.Errorf("lock.Context().Err() = %v, want nil (lease still held)", err)
+		}
+	})
+}
+
+func TestLock_ContextCancelled_OnLeaseLost(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		mock := &mockRedisClient{SetNXFunc: acquires, EvalShaFunc: leaseLost}
+		s := &Persistence{rdb: mock, lockTTL: defaultLockTTL}
+
+		lock, err := s.AcquireLock(t.Context(), "test-lock")
+		if err != nil {
+			t.Fatalf("AcquireLock failed: %v", err)
+		}
+		defer lock.Close()
+
+		time.Sleep(defaultLockTTL)
+		synctest.Wait()
+
+		if err := lock.Context().Err(); err == nil {
+			t.Error("expected lock.Context() to be cancelled once renewal detects the lease is lost")
+		}
+	})
+}
+
+func TestAcquireLock_RenewalRecoversFromTransientError(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		// Clears with margin to spare before the renew deadline, after a
+		// couple of retryPeriod-spaced attempts.
+		renewDeadline := time.Duration(float64(defaultLockTTL) * renewDeadlineFraction)
+		retryPeriod := defaultLockTTL / renewRetryPeriodDivisor
+		errorClearsAt := time.Now().Add(renewDeadline - 2*retryPeriod)
+
+		mock := &mockRedisClient{SetNXFunc: acquires, EvalShaFunc: failsUntil(errorClearsAt, errors.New("connection refused"))}
+		s := &Persistence{rdb: mock, lockTTL: defaultLockTTL}
+
+		lock, err := s.AcquireLock(t.Context(), "test-lock")
+		if err != nil {
+			t.Fatalf("AcquireLock failed: %v", err)
+		}
+		defer lock.Close()
+
+		time.Sleep(2 * defaultLockTTL)
+		synctest.Wait()
+
+		if err := lock.Context().Err(); err != nil {
+			t.Errorf("lock.Context().Err() = %v, want nil (renewal should have recovered from the transient error)", err)
+		}
+	})
+}
+
+func TestAcquireLock_RenewalGivesUpOncePersistentErrorOutlastsTTL(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		mock := &mockRedisClient{SetNXFunc: acquires, EvalShaFunc: failsWith(errors.New("connection refused"))}
+		s := &Persistence{rdb: mock, lockTTL: defaultLockTTL}
+
+		lock, err := s.AcquireLock(t.Context(), "test-lock")
+		if err != nil {
+			t.Fatalf("AcquireLock failed: %v", err)
+		}
+		defer lock.Close()
+
+		time.Sleep(defaultLockTTL) // past the renew deadline (renewDeadlineFraction * defaultLockTTL)
+		synctest.Wait()
+
+		if err := lock.Context().Err(); err == nil {
+			t.Error("expected lock.Context() to be cancelled once the persistent error outlasts the renew deadline")
+		}
+	})
+}
+
+func TestAcquireLock_RenewalGivesUpWhenRedisHangsUntilDeadline(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		mock := &mockRedisClient{SetNXFunc: acquires, EvalShaFunc: hangs}
+		s := &Persistence{rdb: mock, lockTTL: defaultLockTTL}
+
+		lock, err := s.AcquireLock(t.Context(), "test-lock")
+		if err != nil {
+			t.Fatalf("AcquireLock failed: %v", err)
+		}
+
+		time.Sleep(defaultLockTTL)
+		synctest.Wait()
+
+		if err := lock.Context().Err(); err == nil {
+			t.Error("expected lock.Context() to be cancelled once every renewal attempt hangs past the renew deadline")
+		}
+	})
+}
+
+func TestAcquireLock_RenewalGivesUpAfterMixOfFastFailuresThenHang(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		mock := &mockRedisClient{SetNXFunc: acquires, EvalShaFunc: failsNTimesThenHangs(2, errors.New("connection refused"))}
+		s := &Persistence{rdb: mock, lockTTL: defaultLockTTL}
+
+		lock, err := s.AcquireLock(t.Context(), "test-lock")
+		if err != nil {
+			t.Fatalf("AcquireLock failed: %v", err)
+		}
+
+		time.Sleep(defaultLockTTL)
+		synctest.Wait()
+
+		if err := lock.Context().Err(); err == nil {
+			t.Error("expected lock.Context() to be cancelled once the renew deadline elapses, whether attempts fail fast or hang")
+		}
+	})
 }
 
 func receiveEvent(t *testing.T, ch <-chan store.WorkerEvent) store.WorkerEvent {
@@ -1592,4 +1675,102 @@ func (r *testRedis) injectError() {
 // clearError clears errors so commands don't fail. Usually called after injectError.
 func (r *testRedis) clearError() {
 	r.SetError("")
+}
+
+type setNXFunc func(ctx context.Context, key string, value interface{}, ttl time.Duration) *redis.BoolCmd
+
+type evalFunc func(ctx context.Context, sha1 string, keys []string, args ...interface{}) *redis.Cmd
+
+type mockRedisClient struct {
+	redisClient
+
+	SetNXFunc   setNXFunc
+	EvalShaFunc evalFunc
+}
+
+func (m *mockRedisClient) SetNX(ctx context.Context, key string, value interface{}, ttl time.Duration) *redis.BoolCmd {
+	return m.SetNXFunc(ctx, key, value, ttl)
+}
+
+func (m *mockRedisClient) EvalSha(ctx context.Context, sha1 string, keys []string, args ...interface{}) *redis.Cmd {
+	return m.EvalShaFunc(ctx, sha1, keys, args...)
+}
+
+// intCmd and errCmd build the two possible shapes of a script-eval result:
+// intCmd for the CAS script's 1 (applied) / 0 (not owned) return value, and
+// errCmd for a failed call.
+func intCmd(ctx context.Context, v int64) *redis.Cmd {
+	cmd := redis.NewCmd(ctx)
+	cmd.SetVal(v)
+	return cmd
+}
+
+func errCmd(ctx context.Context, err error) *redis.Cmd {
+	cmd := redis.NewCmd(ctx)
+	cmd.SetErr(err)
+	return cmd
+}
+
+// acquires is a setNXFunc reporting the lock was acquired.
+func acquires(ctx context.Context, key string, value interface{}, ttl time.Duration) *redis.BoolCmd {
+	cmd := redis.NewBoolCmd(ctx)
+	cmd.SetVal(true)
+	return cmd
+}
+
+// renews is an evalFunc reporting a successful renewal.
+func renews(ctx context.Context, sha1 string, keys []string, args ...interface{}) *redis.Cmd {
+	return intCmd(ctx, 1)
+}
+
+// leaseLost is an evalFunc reporting that the CAS check found we no longer
+// own the key (someone else took over, or it was deleted) -- Mode 6: an
+// authoritative "you don't hold this anymore," not a retryable failure.
+func leaseLost(ctx context.Context, sha1 string, keys []string, args ...interface{}) *redis.Cmd {
+	return intCmd(ctx, 0)
+}
+
+// failsWith returns an evalFunc that always fails fast with err.
+func failsWith(err error) evalFunc {
+	return func(ctx context.Context, sha1 string, keys []string, args ...interface{}) *redis.Cmd {
+		return errCmd(ctx, err)
+	}
+}
+
+// hangs is an evalFunc that blocks until ctx is done, simulating an
+// unresponsive Redis.
+func hangs(ctx context.Context, sha1 string, keys []string, args ...interface{}) *redis.Cmd {
+	<-ctx.Done()
+	return errCmd(ctx, ctx.Err())
+}
+
+// failsUntil returns an evalFunc that fails fast with err until t, then
+// reports a successful renewal.
+func failsUntil(t time.Time, err error) evalFunc {
+	return func(ctx context.Context, sha1 string, keys []string, args ...interface{}) *redis.Cmd {
+		if time.Now().Before(t) {
+			return errCmd(ctx, err)
+		}
+		return intCmd(ctx, 1)
+	}
+}
+
+// failsNTimesThenHangs returns an evalFunc that fails fast with err for its
+// first n calls, then hangs (as hangs does) on every call after that.
+func failsNTimesThenHangs(n int, err error) evalFunc {
+	var mu sync.Mutex
+	left := n
+	return func(ctx context.Context, sha1 string, keys []string, args ...interface{}) *redis.Cmd {
+		mu.Lock()
+		fail := left > 0
+		if fail {
+			left--
+		}
+		mu.Unlock()
+
+		if fail {
+			return errCmd(ctx, err)
+		}
+		return hangs(ctx, sha1, keys, args...)
+	}
 }
