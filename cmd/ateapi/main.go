@@ -24,7 +24,9 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/agent-substrate/substrate/cmd/ateapi/internal/controlapi"
@@ -72,6 +74,9 @@ var (
 	sessionIDCAPoolFile = pflag.String("session-id-ca-pool", "", "The file that contains the CA pool for signing session JWTs")
 	workerpoolCACerts   = pflag.String("workerpool-ca-certs", "", "The file that contains the CA for verifying workerpool client certificates.")
 
+	drainDelay   = pflag.Duration("drain-delay", 5*time.Second, "How long to keep serving after failing /readyz on shutdown, so endpoint removal can propagate to clients before the gRPC drain starts.")
+	drainTimeout = pflag.Duration("drain-timeout", 15*time.Second, "Deadline for the graceful gRPC drain on shutdown. In-flight RPCs still running past it are forcefully cancelled.")
+
 	showVersion     = pflag.Bool("version", false, "Print version and exit.")
 	authMode        = pflag.String("auth-mode", "mtls", "Auth mode for incoming gRPC: mtls|jwt. 'mtls' (default) relies on transport-level mTLS for client identity. 'jwt' additionally requires a Kubernetes ServiceAccount Bearer token on every RPC. Substrate will drop support for JWT auth mode once the Pod Certificates feature is enabled by default in the minimum supported Kubernetes version.")
 	clientJWTCAFile = pflag.String("client-jwt-ca-cert", ateapiauth.DefaultServiceAccountCAFile, "CA cert file used to verify TLS when fetching the OIDC discovery document and JWKS for JWT authentication. Defaults to the in-cluster service account CA.")
@@ -85,6 +90,12 @@ func main() {
 	}
 	ctx := context.Background()
 	serverboot.InitLogger()
+
+	// Kept separate from ctx so that in-progress work (clients, informers) is
+	// not cancelled the moment SIGTERM arrives. The drain goroutine
+	// below sequences the actual shutdown.
+	shutdownCtx, stopSignals := signal.NotifyContext(ctx, syscall.SIGTERM, os.Interrupt)
+	defer stopSignals()
 
 	tp, err := serverboot.InitTracing(ctx, serverboot.TracingOptions{
 		ServiceName: "ateapi",
@@ -200,13 +211,36 @@ func main() {
 	ateapipb.RegisterSessionIdentityServer(mux, sessionIdentitySrv)
 	ateapipb.RegisterDebugServer(mux, debugSrv)
 
+	readiness := &serverboot.Readiness{}
 	go serverboot.StartMetricsServer(ctx, serverboot.MetricsServerOptions{
-		Addr:         *metricsListenAddr,
-		EnableReadyz: true,
+		Addr:          *metricsListenAddr,
+		Readiness:     readiness,
+		EnableHealthz: true,
 	})
+
+	go drainOnShutdown(shutdownCtx, mux, readiness)
 
 	if err := mux.Serve(lis); err != nil {
 		serverboot.Fatal(ctx, "Failed to serve", err)
+	}
+	slog.InfoContext(ctx, "Shutdown complete")
+}
+
+func drainOnShutdown(ctx context.Context, srv *grpc.Server, readiness *serverboot.Readiness) {
+	<-ctx.Done()
+	slog.InfoContext(ctx, "Shutdown signal received; draining")
+	readiness.MarkNotReady()
+	time.Sleep(*drainDelay)
+	drainComplete := make(chan struct{})
+	go func() {
+		srv.GracefulStop()
+		close(drainComplete)
+	}()
+	select {
+	case <-drainComplete:
+	case <-time.After(*drainTimeout):
+		slog.WarnContext(ctx, "Drain deadline exceeded; forcing stop")
+		srv.Stop()
 	}
 }
 
@@ -247,6 +281,8 @@ func logFlagValues(ctx context.Context) {
 		slog.String("session-id-ca-pool", *sessionIDCAPoolFile),
 		slog.String("workerpool-ca-certs", *workerpoolCACerts),
 		slog.String("auth-mode", *authMode),
+		slog.Duration("drain-delay", *drainDelay),
+		slog.Duration("drain-timeout", *drainTimeout),
 	)
 }
 

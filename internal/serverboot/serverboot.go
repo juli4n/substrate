@@ -26,6 +26,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"sync/atomic"
 
 	"github.com/agent-substrate/substrate/internal/contextlogging"
 	"github.com/google/uuid"
@@ -163,30 +164,64 @@ func ShutdownProvider(name string, shutdown func(context.Context) error) {
 	}
 }
 
+// Readiness is a concurrency-safe flag backing /readyz. The zero value
+// reports ready; MarkNotReady flips it permanently, so a draining
+// server fails its readiness probe while /healthz keeps returning 200.
+type Readiness struct {
+	notReady atomic.Bool
+}
+
+// MarkNotReady makes /readyz return 503 from now on.
+func (r *Readiness) MarkNotReady() { r.notReady.Store(true) }
+
+// Ready reports whether /readyz returns 200.
+func (r *Readiness) Ready() bool { return !r.notReady.Load() }
+
 // MetricsServerOptions configures StartMetricsServer.
 type MetricsServerOptions struct {
 	// Addr is the TCP listen address (e.g. ":9090").
 	Addr string
-	// EnableReadyz adds a /readyz handler that returns 200 OK. Some
-	// binaries (ateapi) want it for Kubernetes readiness probes; others
-	// (atelet) historically didn't surface one.
-	EnableReadyz bool
+	// Readiness, if non-nil, enables a /readyz handler: 200 while
+	// Ready, 503 after MarkNotReady. A zero-value Readiness never
+	// flips, giving a static 200 for binaries with no drain sequence.
+	// Nil serves no /readyz at all; some binaries (atelet)
+	// historically didn't surface one.
+	Readiness *Readiness
+	// EnableHealthz adds an always-200 /healthz for liveness probes,
+	// which must keep succeeding while a draining server fails /readyz.
+	EnableHealthz bool
 }
 
-// StartMetricsServer runs an HTTP server exposing /metrics (Prometheus)
-// and optionally /readyz. Blocks until http.ListenAndServe returns;
-// designed to be `go`-launched.
-func StartMetricsServer(ctx context.Context, opts MetricsServerOptions) {
+// metricsMux builds the handler for StartMetricsServer; split out so
+// tests can exercise the endpoints without binding a port.
+func metricsMux(opts MetricsServerOptions) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.Handler())
-	if opts.EnableReadyz {
+	if opts.Readiness != nil {
 		mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) {
+			if !opts.Readiness.Ready() {
+				http.Error(w, "draining", http.StatusServiceUnavailable)
+				return
+			}
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte("ok"))
 		})
 	}
+	if opts.EnableHealthz {
+		mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("ok"))
+		})
+	}
+	return mux
+}
+
+// StartMetricsServer runs an HTTP server exposing /metrics (Prometheus)
+// and optionally /readyz and /healthz. Blocks until http.ListenAndServe
+// returns; designed to be `go`-launched.
+func StartMetricsServer(ctx context.Context, opts MetricsServerOptions) {
 	slog.InfoContext(ctx, fmt.Sprintf("Starting Prometheus metrics server on %s", opts.Addr))
-	if err := http.ListenAndServe(opts.Addr, mux); err != nil {
+	if err := http.ListenAndServe(opts.Addr, metricsMux(opts)); err != nil {
 		slog.Error("Failed to start prometheus metrics server", slog.Any("err", err))
 	}
 }

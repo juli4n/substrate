@@ -108,8 +108,10 @@ func main() {
 	}
 
 	go serverboot.StartMetricsServer(ctx, serverboot.MetricsServerOptions{
-		Addr:         *metricsListenAddr,
-		EnableReadyz: true,
+		Addr: *metricsListenAddr,
+		// Zero-value Readiness: /readyz is a static 200; glutton has
+		// no drain sequence.
+		Readiness: &serverboot.Readiness{},
 	})
 
 	slog.InfoContext(ctx, "glutton starting",
