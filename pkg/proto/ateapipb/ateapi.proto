@@ -16,7 +16,6 @@ syntax = "proto3";
 
 package ateapi;
 
-import "google/protobuf/field_mask.proto";
 import "google/protobuf/timestamp.proto";
 
 option go_package = "github.com/agent-substrate/substrate/pkg/proto/ateapipb";
@@ -210,50 +209,52 @@ message Actor {
 
   ObjectRef actor_template_version = 13;
 
-  enum Status {
-    STATUS_UNSPECIFIED = 0;
-    STATUS_RESUMING = 1;
-    STATUS_RUNNING = 2;
-    STATUS_SUSPENDING = 3;
-    STATUS_SUSPENDED = 4;
-    STATUS_PAUSING = 5;
-    STATUS_PAUSED = 6;
-    STATUS_CRASHED = 7;
-    STATUS_DELETING = 8;
-  }
-  Status status = 4;
-
-  // worker_assignment points at the worker currently hosting this Actor.
-  // Unset whenever the Actor has no worker (SUSPENDED, PAUSED, CRASHED).
-  WorkerAssignment worker_assignment = 5;
-
-  string in_progress_snapshot_name = 6;
-
   // worker_selector is the per-actor placement constraint. The scheduler
   // evaluates the AND of this selector and the template's workerSelector to
   // find eligible pools. Set at CreateActor; may be updated at any time via
   // UpdateActor. Changes take effect on the next ResumeActor call.
   Selector worker_selector = 7;
 
+  ObjectRef source_tag = 17;
+
+  ActorStatus status = 18;
+}
+
+message ActorStatus {
+
+  enum State {
+    STATE_UNSPECIFIED = 0;
+    STATE_RESUMING = 1;
+    STATE_RUNNING = 2;
+    STATE_SUSPENDING = 3;
+    STATE_SUSPENDED = 4;
+    STATE_PAUSING = 5;
+    STATE_PAUSED = 6;
+    STATE_CRASHED = 7;
+    STATE_DELETING = 8;
+  }
+  State state = 1;
+
+  WorkerAssignment worker_assignment = 2;
+
+  string in_progress_snapshot_name = 3;
+
   // The latest durable snapshot created for this Actor.
-  ObjectRef latest_snapshot = 8;
+  ObjectRef latest_snapshot = 4;
 
   // Node-local state used only while the Actor is paused.
-  LocalSnapshotInfo local_snapshot_info = 9;
+  LocalSnapshotInfo local_snapshot_info = 5;
 
   // Actor version captured when the current durable snapshot began.
-  int64 in_progress_snapshot_source_actor_version = 10;
+  int64 in_progress_snapshot_source_actor_version = 6;
 
   // Volumes attached to the actor. These volumes only live as long as the actor.
   // They are deleted when the actor is deleted.
-  repeated ExternalVolume actor_volumes = 11;
+  repeated ExternalVolume actor_volumes = 7;
 
-  string in_progress_local_snapshot_name = 12;
+  string in_progress_local_snapshot_name = 8;
 
-  // How this Actor was seeded from an ActorSnapshot at CreateActor. Unset if
-  // the Actor was not created from a snapshot. Set once at creation and
-  // immutable afterward.
-  ActorSnapshotSource source_snapshot = 14;
+  ActorSnapshotSource source_snapshot = 9;
 }
 
 // WorkerAssignment identifies the Worker currently hosting an Actor.
@@ -278,16 +279,20 @@ message WorkerAssignment {
 // contents are immutable.
 message ActorSnapshot {
   ResourceMetadata metadata = 1;
-  ObjectRef source_actor = 2;
-  string source_actor_uid = 3;
-  int64 source_actor_version = 4;
-  string actor_template_namespace = 5;
-  string actor_template_name = 6;
-  string actor_template_uid = 7;
-  SnapshotContentScope content_scope = 8;
-  string snapshot_uri = 9;
+  ActorSnapshotStatus status = 2;
+}
+
+message ActorSnapshotStatus {
+  ObjectRef source_actor = 1;
+  string source_actor_uid = 2;
+  int64 source_actor_version = 3;
+  string actor_template_namespace = 4;
+  string actor_template_name = 5;
+  string actor_template_uid = 6;
+  SnapshotContentScope content_scope = 7;
+  string snapshot_uri = 8;
   // Immutable reference to the actor_template_version where the snapshot was created from.
-  ObjectRef actor_template_version = 10;
+  ObjectRef actor_template_version = 9;
 }
 
 // ActorSnapshotTag is an immutable, Atespace-owned alias and retention pin.
@@ -317,17 +322,9 @@ message ObjectRef {
 // ActorSnapshotSource records how an Actor was seeded from an ActorSnapshot.
 // Set once at CreateActor; every field is immutable afterward.
 message ActorSnapshotSource {
-  // The tag specified by the caller at CreateActor.
-  ObjectRef tag = 1;
+  ObjectRef snapshot = 1;
 
-  // Output only. Canonical (atespace, name) of the snapshot the tag
-  // resolved to at creation time.
-  ObjectRef snapshot = 2;
-
-  // Output only. UID of the snapshot resolved at creation time. Stays a
-  // permanent trail even if that snapshot is later deleted and its name
-  // reused by an unrelated snapshot.
-  string snapshot_uid = 3;
+  string snapshot_uid = 2;
 }
 
 // SandboxClass selects the sandbox runtime family. Snapshots are not portable
@@ -336,15 +333,6 @@ enum SandboxClass {
   SANDBOX_CLASS_UNSPECIFIED = 0;
   SANDBOX_CLASS_GVISOR = 1;
   SANDBOX_CLASS_MICROVM = 2;
-}
-
-// ActorTemplateRef addresses a template by its canonical identity or by an
-// Atespace-owned ActorTemplateVersion.
-message ActorTemplateRef {
-  oneof reference {
-    ObjectRef actor_template_version = 1;
-    ObjectRef actor_template = 2;
-  }
 }
 
 // ActorTemplate an mutable, Atespace-owned resource that points to a default
@@ -385,21 +373,28 @@ message ActorTemplateVersion {
 
   SnapshotsConfig snapshots_config = 6;
 
-  // sandbox_config selects the sandbox runtime this version's actors run on.
-  // Required. Resolved and frozen into resolved_sandbox at creation time.
   SandboxConfig sandbox_config = 7;
 
+  // TODO: cpu class will be specified here in the future.
+
+  ActorTemplateVersionStatus status = 13;
+
+}
+
+message ActorTemplateVersionStatus {
+  // sandbox_assets is sandbox_config's referenced SandboxConfig content,
+  // frozen at creation time.
+  SandboxAssets sandbox_assets = 1;
+
   // golden_snapshot points at the ActorSnapshot, in the reserved ate-golden
-  // system atespace, built for this version by ate-api. Set once state is
+  // system atespace, built for this version by ate-api. Set once phase is
   // READY.
-  ObjectRef golden_snapshot = 8;
+  ObjectRef golden_snapshot = 2;
 
   // State machine, mirroring the ActorTemplateVersion CRD PhaseType:
   // INITIAL -> RESUME_GOLDEN_ACTOR -> WAIT_GOLDEN_ACTOR -> {READY | FAILED}.
   // READY and FAILED are terminal; the version is only usable once READY.
-  ActorTemplateVersionPhase phase = 9;
-
-  // TODO: cpu class will be specified here in the future.
+  ActorTemplateVersionPhase phase = 3;
 }
 
 message ActorTemplateVersionPhase {
@@ -427,13 +422,6 @@ message SandboxConfig {
   // config_name names the cluster-scoped SandboxConfig Kubernetes object
   // supplying the sandbox binaries. Required; must match sandbox_class.
   string config_name = 2;
-
-  // sandbox_assets is the referenced SandboxConfig's content frozen at
-  // creation time.
-  SandboxAssets sandbox_assets = 3;
-
-  // pause_image is the container to use as the root sandbox container.
-  string pause_image = 4;
 }
 
 message SnapshotsConfig {
@@ -574,6 +562,7 @@ message SandboxAssets {
   SandboxClass sandbox_class = 1;
   // assets maps architecture (GOARCH, e.g. "amd64") to that arch's files.
   map<string, ArchAssets> assets = 2;
+  string pause_image = 3;
 }
 
 message ArchAssets {
@@ -633,19 +622,9 @@ message GetActorTemplateRequest {
   ObjectRef actor_template = 1;
 }
 
-// Request to update mutable fields on an existing ActorTemplate.
+// Request to update an existing ActorTemplate.
 message UpdateActorTemplateRequest {
-  // The actor template to update.
-  // actor_template.metadata.name identifies which resource to update.
-  // actor_template.metadata.version and actor_template.metadata.uid are
-  // optional preconditions and zero values skip the check.
   ActorTemplate actor_template = 1;
-
-  // The set of fields to update. Required.
-  //
-  // Only the following fields are supported:
-  //   - default_version_on_create
-  google.protobuf.FieldMask update_mask = 2;
 }
 
 message ListActorTemplatesRequest {
@@ -729,22 +708,9 @@ message CreateActorRequest {
   Actor actor = 1;
 }
 
-// Request to update mutable fields on an existing Actor.
-// May be called regardless of the actor's current status.
-// Changes take effect on the next ResumeActor call.
+// Request to update an existing Actor.
 message UpdateActorRequest {
-  // The actor to update.
-  // actor.metadata.atespace and actor.metadata.name identify which resource to
-  // update.
-  // actor.metadata.version and actor.metadata.uid are optional preconditions and
-  // zero values skip the check.
   Actor actor = 1;
-
-  // The set of fields to update. Required.
-  //
-  // Only the following fields are supported:
-  //   - worker_selector
-  google.protobuf.FieldMask update_mask = 2;
 }
 
 message SuspendActorRequest {
@@ -806,21 +772,9 @@ message CreateActorSnapshotTagRequest {
   ActorSnapshotTag actor_snapshot_tag = 1;
 }
 
-// Request to update mutable fields on an existing ActorSnapshotTag.
-// The tag keeps its address: the snapshot it points at cannot be changed.
+// Request to update an existing ActorSnapshotTag.
 message UpdateActorSnapshotTagRequest {
-  // The tag to update.
-  // tag.metadata.atespace and tag.metadata.name identify which resource to
-  // update.
-  // tag.metadata.version and tag.metadata.uid are optional preconditions
-  // and zero values skip the check.
   ActorSnapshotTag tag = 1;
-
-  // The set of fields to update. Required.
-  //
-  // Only the following fields are supported:
-  //   - scope
-  google.protobuf.FieldMask update_mask = 2;
 }
 
 message DeleteActorSnapshotTagRequest {
