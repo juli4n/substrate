@@ -1,0 +1,13 @@
+{
+  "worker": {
+    "workerNamespace": "substrate-workers",
+    "workerPool": "checkout-worker-pool",
+    "workerPod": "checkout-worker-pool-6b9d4f-x2p7q",
+    "workerPodUid": "6b1f0d3a-2e97-4c66-9c3d-6a1b2e4f9d70",
+    "nodeName": "gke-substrate-prod-pool-1-abcd1234",
+    "ip": "10.4.12.31",
+    "sandboxClass": "gvisor",
+    "labels": { "tier": "1" },
+    "capacity": { "cpuMilli": "2000", "memoryBytes": "4294967296" }
+  }
+}

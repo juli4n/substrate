@@ -1,0 +1,29 @@
+{
+  "actorTemplate": {
+    "metadata": { "atespace": "prod", "name": "checkout-worker" },
+    "workerSelector": { "matchLabels": { "tier": "1" } },
+    "containers": [
+      {
+        "name": "app",
+        "image": "us-docker.pkg.dev/substrate/checkout-worker:2026-07-28",
+        "args": ["--port=8080"],
+        "env": [{ "name": "PORT", "value": "8080" }],
+        "readyz": { "httpGet": { "path": "/readyz", "port": 8080 }, "timeoutSeconds": 30 },
+        "volumeMounts": [{ "name": "durable-dir", "mountPath": "/data" }]
+      }
+    ],
+    "volumes": [
+      { "name": "durable-dir", "durableDir": {}, "type": "DurableDir" }
+    ],
+    "snapshotsConfig": {
+      "onPause": "SNAPSHOT_CONTENT_SCOPE_FULL",
+      "onCommit": "SNAPSHOT_CONTENT_SCOPE_DATA",
+      "onResume": { "fromData": "RESUME_SOURCE_GOLDEN" },
+      "storageLocation": "gs://substrate-prod-snapshots/checkout-worker"
+    },
+    "sandboxConfig": {
+      "sandboxClass": "SANDBOX_CLASS_GVISOR",
+      "configName": "gvisor-default"
+    }
+  }
+}

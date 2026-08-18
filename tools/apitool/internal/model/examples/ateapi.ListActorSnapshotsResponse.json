@@ -1,0 +1,18 @@
+{
+  "snapshots": [
+    {
+      "metadata": {
+        "atespace": "prod",
+        "name": "checkout-worker-7f3a-snap-2026-08-13",
+        "uid": "b2b6a8e1-9c3d-4f2a-8e77-1d4f9a0c6b12",
+        "version": "1",
+        "createTime": "2026-08-13T09:40:12Z",
+        "updateTime": "2026-08-13T09:40:12Z"
+      },
+      "status": {
+        "sourceActor": { "atespace": "prod", "name": "checkout-worker-7f3a" },
+        "contentScope": "SNAPSHOT_CONTENT_SCOPE_DATA"
+      }
+    }
+  ]
+}

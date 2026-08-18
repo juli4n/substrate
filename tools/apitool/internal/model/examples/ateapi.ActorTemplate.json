@@ -1,0 +1,41 @@
+{
+  "metadata": {
+    "atespace": "prod",
+    "name": "checkout-worker",
+    "uid": "3fa9c2d1-8b41-4a6e-9c2a-51e2f9b7d001",
+    "version": "3",
+    "createTime": "2026-05-02T10:00:00Z",
+    "updateTime": "2026-07-28T15:12:00Z"
+  },
+  "workerSelector": { "matchLabels": { "tier": "1" } },
+  "containers": [
+    {
+      "name": "app",
+      "image": "us-docker.pkg.dev/substrate/checkout-worker:2026-07-28",
+      "args": ["--port=8080"],
+      "env": [{ "name": "PORT", "value": "8080" }],
+      "readyz": { "httpGet": { "path": "/readyz", "port": 8080 }, "timeoutSeconds": 30 },
+      "volumeMounts": [{ "name": "durable-dir", "mountPath": "/data" }]
+    }
+  ],
+  "volumes": [
+    { "name": "durable-dir", "durableDir": {}, "type": "DurableDir" }
+  ],
+  "snapshotsConfig": {
+    "onPause": "SNAPSHOT_CONTENT_SCOPE_FULL",
+    "onCommit": "SNAPSHOT_CONTENT_SCOPE_DATA",
+    "onResume": { "fromData": "RESUME_SOURCE_GOLDEN" },
+    "storageLocation": "gs://substrate-prod-snapshots/checkout-worker"
+  },
+  "sandboxConfig": {
+    "sandboxClass": "SANDBOX_CLASS_GVISOR",
+    "configName": "gvisor-default"
+  },
+  "resources": {
+    "limits": [{ "name": "cpu", "quantity": "2" }]
+  },
+  "status": {
+    "phase": "ACTOR_TEMPLATE_PHASE_READY",
+    "goldenSnapshot": { "atespace": "ate-golden", "name": "checkout-worker-v3-golden-0091" }
+  }
+}

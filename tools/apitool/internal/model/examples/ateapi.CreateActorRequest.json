@@ -1,0 +1,8 @@
+{
+  "actor": {
+    "metadata": { "atespace": "prod", "name": "checkout-worker-7f3a" },
+    "actorTemplateNamespace": "substrate-system",
+    "actorTemplateName": "checkout-worker",
+    "workerSelector": { "matchLabels": { "tier": "1" } }
+  }
+}

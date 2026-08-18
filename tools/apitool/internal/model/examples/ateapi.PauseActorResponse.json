@@ -1,0 +1,20 @@
+{
+  "actor": {
+    "metadata": {
+      "atespace": "prod",
+      "name": "checkout-worker-7f3a",
+      "uid": "8f14e45f-ceea-4c3e-9d5b-1a2b3c4d5e6f",
+      "version": "16"
+    },
+    "actorTemplateNamespace": "substrate-system",
+    "actorTemplateName": "checkout-worker",
+    "status": {
+      "state": "ACTOR_STATE_PAUSED",
+      "localSnapshotInfo": {
+        "snapshotName": "checkout-worker-7f3a-local-2026-08-13T10-02-00",
+        "nodeVmsWithLocalSnapshots": ["gke-substrate-prod-pool-1-abcd1234"],
+        "contentScope": "SNAPSHOT_CONTENT_SCOPE_FULL"
+      }
+    }
+  }
+}

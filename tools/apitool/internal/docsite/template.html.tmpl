@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Substrate API Reference</title>
+<style>{{.Style}}</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">Substrate API Reference</div>
+  <div class="search-wrap">
+    <input id="search-input" type="text" placeholder="Search resources, methods, messages, enums…" autocomplete="off" spellcheck="false">
+    <div id="search-results" class="search-results" hidden></div>
+  </div>
+</header>
+<div class="layout">
+  <nav class="sidebar">
+    <details open>
+      <summary>Resources <span class="count">{{len .Resources}}</span></summary>
+      <ul>
+        {{range .Resources}}<li><a href="#{{resourceAnchor .Message.FullName}}">{{.Message.Name}}</a></li>
+        {{end}}
+      </ul>
+    </details>
+    <details>
+      <summary>Messages <span class="count">{{len .OtherMessages}}</span></summary>
+      <ul>
+        {{range .OtherMessages}}<li><a href="#{{msgAnchor .FullName}}">{{.Name}}</a></li>
+        {{end}}
+      </ul>
+    </details>
+    <details>
+      <summary>Enums <span class="count">{{len .API.Enums}}</span></summary>
+      <ul>
+        {{range .API.Enums}}<li><a href="#{{enumAnchor .FullName}}">{{.Name}}</a></li>
+        {{end}}
+      </ul>
+    </details>
+  </nav>
+  <main class="content">
+
+    {{range .Resources}}
+    <section id="{{resourceAnchor .Message.FullName}}" class="group resource-page">
+      <section class="page-section{{if not .Methods}} single{{end}}">
+        <div class="section-main">
+          <h1 class="resource-title">{{.Message.Name}}</h1>
+          {{if .Message.Comment}}<div class="description">{{markdown .Message.Comment}}</div>{{end}}
+        </div>
+        {{if .Methods}}
+        <div class="section-rail">
+          <div class="rail-sticky">
+            <table>
+              <thead><tr><th>Method</th><th>Description</th><th>Request</th><th>Response</th></tr></thead>
+              <tbody>
+                {{range .Methods}}
+                <tr>
+                  <td class="mono"><a href="#{{methodAnchor .ServiceFullName .Name}}">{{.Name}}</a></td>
+                  <td>{{markdown .Comment}}</td>
+                  <td class="mono"><a href="#{{msgAnchor .InputName}}">{{.InputName}}</a></td>
+                  <td class="mono"><a href="#{{msgAnchor .OutputName}}">{{.OutputName}}</a></td>
+                </tr>
+                {{end}}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        {{end}}
+      </section>
+
+      <section class="page-section{{if not .Message.Example}} single{{end}}">
+        <div class="section-main">
+          <h2 class="section-title">{{.Message.Name}} fields</h2>
+          {{if .Attrs}}
+          {{range .Attrs}}{{template "attrRow" .}}{{end}}
+          {{else}}
+          <p class="empty-note">No fields.</p>
+          {{end}}
+        </div>
+        {{if .Message.Example}}
+        <div class="section-rail">
+          <div class="rail-sticky">
+            <div class="rail-card example">
+              <h2>Example &middot; {{.Message.Name}}</h2>
+              <pre>{{highlightJSON .Message.Example}}</pre>
+            </div>
+          </div>
+        </div>
+        {{end}}
+      </section>
+
+      {{if .Methods}}<h1>Methods</h1>{{end}}
+      {{range .Methods}}
+      <section class="page-section{{if not (or .RequestExample .ResponseExample)}} single{{end}}" id="{{methodAnchor .ServiceFullName .Name}}">
+        <div class="section-main">
+          <h2 class="section-title mono">{{.Name}}</h2>
+          {{if .Comment}}<div class="description">{{markdown .Comment}}</div>{{end}}
+          {{if .Params}}
+          <p class="section-label">Parameters</p>
+          {{range .Params}}{{template "attrRow" .}}{{end}}
+          {{else}}
+          <p class="empty-note">No parameters.</p>
+          {{end}}
+          {{if .Response}}
+          <p class="section-label">Response</p>
+          {{range .Response}}{{template "attrRow" .}}{{end}}
+          {{end}}
+        </div>
+        {{if or .RequestExample .ResponseExample}}
+        <div class="section-rail">
+          <div class="rail-sticky">
+            {{if .RequestExample}}
+            <div class="rail-card example">
+              <h2>Request &middot; {{.InputName}}</h2>
+              <pre>{{highlightJSON .RequestExample}}</pre>
+            </div>
+            {{end}}
+            {{if .ResponseExample}}
+            <div class="rail-card example">
+              <h2>Response &middot; {{.OutputName}}</h2>
+              <pre>{{highlightJSON .ResponseExample}}</pre>
+            </div>
+            {{end}}
+          </div>
+        </div>
+        {{end}}
+      </section>
+      {{end}}
+
+    </section>
+    {{end}}
+
+    <section class="group">
+      <h1>Messages</h1>
+      {{range .OtherMessages}}
+      <article id="{{msgAnchor .FullName}}" class="card">
+        <h2 class="mono">{{.Name}}</h2>
+        {{if .ParentFullName}}<p class="parent-note">Nested in <a class="mono" href="#{{msgAnchor .ParentFullName}}">{{.ParentFullName}}</a></p>{{end}}
+        {{if .Comment}}<div class="comment">{{markdown .Comment}}</div>{{end}}
+        {{if .Fields}}
+        <table>
+          <thead><tr><th>Field</th><th>Description</th><th>Type</th></tr></thead>
+          <tbody>
+            {{range .Fields}}
+            <tr>
+              <td class="mono">{{.Name}}{{if .OneofName}} <span class="tag">oneof {{.OneofName}}</span>{{end}}{{if .Proto3Optional}} <span class="tag">optional</span>{{end}}</td>
+              <td>{{markdown .Comment}}</td>
+              <td class="mono">
+                {{if .TypeIsExternal}}{{.TypeDisplay}}
+                {{else if eq .TypeKind "message"}}<a href="#{{msgAnchor .TypeFullName}}">{{.TypeDisplay}}</a>
+                {{else if eq .TypeKind "enum"}}<a href="#{{enumAnchor .TypeFullName}}">{{.TypeDisplay}}</a>
+                {{else}}{{.TypeDisplay}}
+                {{end}}
+              </td>
+            </tr>
+            {{end}}
+          </tbody>
+        </table>
+        {{else}}
+        <p class="empty-note">No fields.</p>
+        {{end}}
+      </article>
+      {{end}}
+    </section>
+
+    <section class="group">
+      <h1>Enums</h1>
+      {{range .API.Enums}}
+      <article id="{{enumAnchor .FullName}}" class="card">
+        <h2 class="mono">{{.Name}}</h2>
+        {{if .ParentFullName}}<p class="parent-note">Nested in <a class="mono" href="#{{msgAnchor .ParentFullName}}">{{.ParentFullName}}</a></p>{{end}}
+        {{if .Comment}}<div class="comment">{{markdown .Comment}}</div>{{end}}
+        <table>
+          <thead><tr><th>Value</th><th>Description</th><th>Number</th></tr></thead>
+          <tbody>
+            {{range .Values}}
+            <tr>
+              <td class="mono">{{.Name}}</td>
+              <td>{{markdown .Comment}}</td>
+              <td class="mono">{{.Number}}</td>
+            </tr>
+            {{end}}
+          </tbody>
+        </table>
+      </article>
+      {{end}}
+    </section>
+
+  </main>
+</div>
+<script id="apitool-index" type="application/json">{{.Index}}</script>
+<script>{{.Script}}</script>
+</body>
+</html>
+
+{{/* attrRow renders one model.AttrNode as a name+type row with its
+     description below, and - when it has Children - a toggle revealing
+     them (recursively, however deep the nesting goes). Used for both a
+     resource's own fields and a method's request/response fields: both are
+     just fields, so there's no separate wording to keep consistent between
+     two copies of this template. */}}
+
+{{define "attrRow"}}
+<div class="attr-row">
+  <div class="attr-head">
+    <span class="attr-name">{{.Path}}{{if .Field.OneofName}} <span class="tag">oneof {{.Field.OneofName}}</span>{{end}}{{if .Field.Proto3Optional}} <span class="tag">optional</span>{{end}}</span>
+    <span class="attr-type">
+      {{if .Field.TypeIsExternal}}{{.Field.TypeDisplay}}
+      {{else if eq .Field.TypeKind "message"}}<a href="#{{msgAnchor .Field.TypeFullName}}">{{.Field.TypeDisplay}}</a>
+      {{else if eq .Field.TypeKind "enum"}}<a href="#{{enumAnchor .Field.TypeFullName}}">{{.Field.TypeDisplay}}</a>
+      {{else}}{{.Field.TypeDisplay}}
+      {{end}}
+    </span>
+  </div>
+  {{if .Field.Comment}}<div class="attr-desc">{{markdown .Field.Comment}}</div>{{end}}
+  {{if .Children}}
+  {{$cid := nextAttrID}}
+  <button class="expand-toggle" type="button" aria-expanded="false" aria-controls="{{$cid}}"><span class="sign">+</span> Show fields</button>
+  <div class="attr-children" id="{{$cid}}" hidden>
+    {{range .Children}}{{template "attrRow" .}}{{end}}
+  </div>
+  {{end}}
+</div>
+{{end}}

@@ -1,0 +1,12 @@
+{
+  "metadata": {
+    "atespace": "prod",
+    "name": "golden-2026-07-30",
+    "uid": "b9a1c4e2-7f3d-4a8b-9c6e-1d0f5a3b8e22",
+    "version": "1",
+    "createTime": "2026-07-30T02:00:00Z",
+    "updateTime": "2026-07-30T02:00:00Z"
+  },
+  "snapshot": { "atespace": "ate-golden", "name": "checkout-worker-v3-golden-0091" },
+  "scope": "ACTOR_SNAPSHOT_TAG_SCOPE_PUBLISHED"
+}

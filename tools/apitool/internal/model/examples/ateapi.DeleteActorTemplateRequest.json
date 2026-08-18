@@ -1,0 +1,3 @@
+{
+  "actorTemplate": { "atespace": "prod", "name": "checkout-worker" }
+}

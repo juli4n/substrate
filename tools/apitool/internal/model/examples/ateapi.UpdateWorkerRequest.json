@@ -1,0 +1,8 @@
+{
+  "worker": {
+    "metadata": { "name": "wkr-8f3a1c2d" },
+    "sandboxClass": "gvisor",
+    "labels": { "tier": "2" }
+  },
+  "updateMask": "sandboxClass,labels"
+}

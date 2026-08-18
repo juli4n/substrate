@@ -1,0 +1,15 @@
+{
+  "actorTemplates": [
+    {
+      "metadata": {
+        "atespace": "prod",
+        "name": "checkout-worker",
+        "uid": "3fa9c2d1-8b41-4a6e-9c2a-51e2f9b7d001",
+        "version": "3",
+        "createTime": "2026-05-02T10:00:00Z",
+        "updateTime": "2026-07-28T15:12:00Z"
+      },
+      "status": { "phase": "ACTOR_TEMPLATE_PHASE_READY" }
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "actor": {
+    "metadata": {
+      "atespace": "prod",
+      "name": "checkout-worker-7f3a"
+    },
+    "workerSelector": {
+      "matchLabels": { "tier": "2" }
+    }
+  },
+  "updateMask": "workerSelector"
+}
