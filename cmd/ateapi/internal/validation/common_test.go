@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package controlapi
+package validation
 
 import (
 	"context"
@@ -27,6 +27,22 @@ import (
 	"k8s.io/apimachinery/pkg/api/operation"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 )
+
+// testAtespace is a valid atespace name shared by tests across this package.
+const testAtespace = "test-atespace"
+
+func selectorLabelsOfSize(n int) map[string]string {
+	labels := make(map[string]string, n)
+	for i := 0; i < n; i++ {
+		labels[fmt.Sprintf("k%d", i)] = "v"
+	}
+	return labels
+}
+
+func assertValidateErr(t *testing.T, got field.ErrorList, want field.ErrorList) {
+	t.Helper()
+	field.ErrorMatcher{}.ByType().ByField().ByOrigin().Test(t, want, got)
+}
 
 func validResourceMetadata(mutate ...func(*ateapipb.ResourceMetadata)) *ateapipb.ResourceMetadata {
 	// This is valid with as many fields populated as possible.
@@ -1451,7 +1467,7 @@ func TestValidateTagUpdate(t *testing.T) {
 
 // TestValidateTagRequestPayloads covers the generated rules on the
 // tag requests. The RPCs call these directly (see
-// validateCreateTagRequest), so these guard the schema against
+// ValidateCreateTagRequest), so these guard the schema against
 // drift; tag_test.go covers what the handlers make of it.
 func TestValidateTagRequestPayloads(t *testing.T) {
 	validTag := validTag

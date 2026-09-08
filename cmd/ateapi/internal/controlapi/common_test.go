@@ -16,13 +16,11 @@ package controlapi
 
 import (
 	"context"
-	"fmt"
 	"testing"
 
 	"github.com/agent-substrate/substrate/cmd/ateapi/internal/store"
 	"github.com/agent-substrate/substrate/pkg/proto/ateapipb"
 	"google.golang.org/protobuf/testing/protocmp"
-	"k8s.io/apimachinery/pkg/util/validation/field"
 )
 
 // Helpers shared by the unit tests in this package.
@@ -35,19 +33,6 @@ var (
 	ignoreUID        = protocmp.IgnoreFields(&ateapipb.ResourceMetadata{}, "uid")
 	ignoreTimestamps = protocmp.IgnoreFields(&ateapipb.ResourceMetadata{}, "create_time", "update_time")
 )
-
-func selectorLabelsOfSize(n int) map[string]string {
-	labels := make(map[string]string, n)
-	for i := 0; i < n; i++ {
-		labels[fmt.Sprintf("k%d", i)] = "v"
-	}
-	return labels
-}
-
-func assertValidateErr(t *testing.T, got field.ErrorList, want field.ErrorList) {
-	t.Helper()
-	field.ErrorMatcher{}.ByType().ByField().ByOrigin().Test(t, want, got)
-}
 
 // firstAssignment returns the single Actor a Worker is hosting, or nil when it
 // is hosting none. These tests place one Actor per Worker, so "the assignment"
