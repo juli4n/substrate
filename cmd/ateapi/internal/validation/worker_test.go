@@ -384,6 +384,41 @@ func TestValidateDeleteWorkerRequest(t *testing.T) {
 	}
 }
 
+func TestValidateDrainWorkerRequest(t *testing.T) {
+	tests := []struct {
+		name string
+		req  *ateapipb.DrainWorkerRequest
+		want field.ErrorList
+	}{{
+		"valid",
+		&ateapipb.DrainWorkerRequest{Worker: &ateapipb.ObjectRef{Name: apiWorkerName}},
+		nil,
+	}, {
+		"missing worker",
+		&ateapipb.DrainWorkerRequest{},
+		field.ErrorList{field.Required(field.NewPath("worker"), "")},
+	}, {
+		"missing worker.name",
+		&ateapipb.DrainWorkerRequest{Worker: &ateapipb.ObjectRef{}},
+		field.ErrorList{field.Required(field.NewPath("worker", "name"), "")},
+	}, {
+		"invalid worker.name",
+		&ateapipb.DrainWorkerRequest{Worker: &ateapipb.ObjectRef{Name: "ID1"}},
+		field.ErrorList{field.Invalid(field.NewPath("worker", "name"), nil, "").WithOrigin("format=k8s-short-name")},
+	}, {
+		// Workers are global-scoped, so naming an atespace is a client bug
+		// rather than a lookup that happens to miss.
+		"worker.atespace must be empty",
+		&ateapipb.DrainWorkerRequest{Worker: &ateapipb.ObjectRef{Atespace: "team-a", Name: apiWorkerName}},
+		field.ErrorList{field.Forbidden(field.NewPath("worker", "atespace"), "")},
+	}}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertValidateErr(t, ValidateDrainWorkerRequest(context.Background(), tt.req), tt.want)
+		})
+	}
+}
+
 func TestValidateUpdateWorkerRequest(t *testing.T) {
 	// This test verifies validation of user input for update. The worker body
 	// is deliberately not descended into here (updates are validated in two
