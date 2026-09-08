@@ -69,6 +69,53 @@ func withWorkerStatus(mods ...func(*ateapipb.WorkerStatus)) func(*ateapipb.Worke
 	}
 }
 
+func TestValidateListWorkerActorAssignmentsRequest(t *testing.T) {
+	tests := []struct {
+		name string
+		req  *ateapipb.ListWorkerActorAssignmentsRequest
+		want field.ErrorList
+	}{{
+		"valid, no paging",
+		&ateapipb.ListWorkerActorAssignmentsRequest{Worker: &ateapipb.ObjectRef{Name: apiWorkerName}},
+		nil,
+	}, {
+		"valid, positive page_size",
+		&ateapipb.ListWorkerActorAssignmentsRequest{Worker: &ateapipb.ObjectRef{Name: apiWorkerName}, PageSize: 10},
+		nil,
+	}, {
+		"missing worker",
+		&ateapipb.ListWorkerActorAssignmentsRequest{},
+		field.ErrorList{field.Required(field.NewPath("worker"), "")},
+	}, {
+		"missing worker.name",
+		&ateapipb.ListWorkerActorAssignmentsRequest{Worker: &ateapipb.ObjectRef{}},
+		field.ErrorList{field.Required(field.NewPath("worker", "name"), "")},
+	}, {
+		// Workers are global-scoped, so naming an atespace is a client bug
+		// rather than a lookup that happens to miss.
+		"worker.atespace must be empty",
+		&ateapipb.ListWorkerActorAssignmentsRequest{Worker: &ateapipb.ObjectRef{Atespace: "team-a", Name: apiWorkerName}},
+		field.ErrorList{field.Forbidden(field.NewPath("worker", "atespace"), "")},
+	}, {
+		"negative page_size",
+		&ateapipb.ListWorkerActorAssignmentsRequest{Worker: &ateapipb.ObjectRef{Name: apiWorkerName}, PageSize: -1},
+		field.ErrorList{field.Invalid(field.NewPath("page_size"), int32(-1), "").WithOrigin("minimum")},
+	}, {
+		"valid page_token",
+		&ateapipb.ListWorkerActorAssignmentsRequest{Worker: &ateapipb.ObjectRef{Name: apiWorkerName}, PageToken: strings.Repeat("x", 256)},
+		nil,
+	}, {
+		"too-large page_token",
+		&ateapipb.ListWorkerActorAssignmentsRequest{Worker: &ateapipb.ObjectRef{Name: apiWorkerName}, PageToken: strings.Repeat("x", 257)},
+		field.ErrorList{field.TooLongCharacters(field.NewPath("page_token"), "", 256).WithOrigin("maxLength")},
+	}}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertValidateErr(t, ValidateListWorkerActorAssignmentsRequest(context.Background(), tt.req), tt.want)
+		})
+	}
+}
+
 // TestValidateCreateWorkerRequest pins the field paths ValidateCreateWorkerRequest reports.
 func TestValidateCreateWorkerRequest(t *testing.T) {
 	// This test verifies validation of user input for creation. The RPC scrubs
