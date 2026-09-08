@@ -116,6 +116,39 @@ func TestValidateListWorkerActorAssignmentsRequest(t *testing.T) {
 	}
 }
 
+func TestValidateListWorkersRequest(t *testing.T) {
+	tests := []struct {
+		name string
+		req  *ateapipb.ListWorkersRequest
+		want field.ErrorList
+	}{{
+		"valid, no page_size",
+		&ateapipb.ListWorkersRequest{},
+		nil,
+	}, {
+		"valid, positive page_size",
+		&ateapipb.ListWorkersRequest{PageSize: 10},
+		nil,
+	}, {
+		"negative page_size",
+		&ateapipb.ListWorkersRequest{PageSize: -1},
+		field.ErrorList{field.Invalid(field.NewPath("page_size"), int32(-1), "").WithOrigin("minimum")},
+	}, {
+		"valid page_token",
+		&ateapipb.ListWorkersRequest{PageToken: strings.Repeat("x", 256)},
+		nil,
+	}, {
+		"too-large page_token",
+		&ateapipb.ListWorkersRequest{PageToken: strings.Repeat("x", 257)},
+		field.ErrorList{field.TooLongCharacters(field.NewPath("page_token"), "", 256).WithOrigin("maxLength")},
+	}}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertValidateErr(t, ValidateListWorkersRequest(context.Background(), tt.req), tt.want)
+		})
+	}
+}
+
 // TestValidateCreateWorkerRequest pins the field paths ValidateCreateWorkerRequest reports.
 func TestValidateCreateWorkerRequest(t *testing.T) {
 	// This test verifies validation of user input for creation. The RPC scrubs
