@@ -149,6 +149,41 @@ func TestValidateListWorkersRequest(t *testing.T) {
 	}
 }
 
+func TestValidateGetWorkerRequest(t *testing.T) {
+	tests := []struct {
+		name string
+		req  *ateapipb.GetWorkerRequest
+		want field.ErrorList
+	}{{
+		"valid",
+		&ateapipb.GetWorkerRequest{Worker: &ateapipb.ObjectRef{Name: apiWorkerName}},
+		nil,
+	}, {
+		"missing worker",
+		&ateapipb.GetWorkerRequest{},
+		field.ErrorList{field.Required(field.NewPath("worker"), "")},
+	}, {
+		"missing worker.name",
+		&ateapipb.GetWorkerRequest{Worker: &ateapipb.ObjectRef{}},
+		field.ErrorList{field.Required(field.NewPath("worker", "name"), "")},
+	}, {
+		"invalid worker.name",
+		&ateapipb.GetWorkerRequest{Worker: &ateapipb.ObjectRef{Name: "ID1"}},
+		field.ErrorList{field.Invalid(field.NewPath("worker", "name"), nil, "").WithOrigin("format=k8s-short-name")},
+	}, {
+		// Workers are global-scoped, so naming an atespace is a client bug
+		// rather than a lookup that happens to miss.
+		"worker.atespace must be empty",
+		&ateapipb.GetWorkerRequest{Worker: &ateapipb.ObjectRef{Atespace: "team-a", Name: apiWorkerName}},
+		field.ErrorList{field.Forbidden(field.NewPath("worker", "atespace"), "")},
+	}}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertValidateErr(t, ValidateGetWorkerRequest(context.Background(), tt.req), tt.want)
+		})
+	}
+}
+
 // TestValidateCreateWorkerRequest pins the field paths ValidateCreateWorkerRequest reports.
 func TestValidateCreateWorkerRequest(t *testing.T) {
 	// This test verifies validation of user input for creation. The RPC scrubs
