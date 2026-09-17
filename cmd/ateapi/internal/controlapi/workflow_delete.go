@@ -118,6 +118,22 @@ func (w *ActorWorkflow) ensureAteletTerminated(ctx context.Context, actorRef res
 	ctx, done := stepSpan(ctx, "CallAteletTerminate")
 	defer func() { err = done(err) }()
 
+	return terminateWorkload(ctx, w.store, w.dialer, actorRef, actor, actorTemplate)
+}
+
+// terminateWorkloadStore enumerates the exact storage methods needed by
+// terminateWorkload and nothing more.
+type terminateWorkloadStore interface {
+	GetWorker(ctx context.Context, name string) (*ateapipb.Worker, error)
+	workerAssignmentReader
+}
+
+// terminateWorkload asks the worker atelet to tear down actor's workload. A
+// missing assignment, a gone worker/pod, or a worker no longer hosting the
+// actor are not errors: nothing is left to terminate. Idempotent: a repeat
+// call after Terminate already succeeded gets NotFound, also treated as
+// success.
+func terminateWorkload(ctx context.Context, st terminateWorkloadStore, dialer *AteletDialer, actorRef resources.ActorRef, actor *ateapipb.Actor, actorTemplate *ateapipb.ActorTemplate) error {
 	assignment := actor.GetStatus().GetWorkerAssignment()
 	if assignment == nil {
 		slog.InfoContext(ctx, "actor has no worker assignment, skipping atlet terminate request", slog.Any("actor", actorRef))
@@ -125,7 +141,7 @@ func (w *ActorWorkflow) ensureAteletTerminated(ctx context.Context, actorRef res
 	}
 
 	if workerName := assignment.GetWorker().GetName(); workerName != "" {
-		worker, err := w.store.GetWorker(ctx, workerName)
+		worker, err := st.GetWorker(ctx, workerName)
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
 				slog.InfoContext(ctx, "worker not found in store, skipping atelet terminate request", slog.String("worker", workerName), slog.Any("actor", actorRef))
@@ -136,7 +152,7 @@ func (w *ActorWorkflow) ensureAteletTerminated(ctx context.Context, actorRef res
 		// Ask whether the worker still HOSTS this actor, not whether its one
 		// assignment happens to be this actor: a worker hosting several is the
 		// ordinary case, and the others are none of this delete's business.
-		hosted, err := workerHostsActor(ctx, w.store, worker.GetMetadata().GetName(), actor.GetMetadata().GetUid())
+		hosted, err := workerHostsActor(ctx, st, worker.GetMetadata().GetName(), actor.GetMetadata().GetUid())
 		if err != nil {
 			return err
 		}
@@ -151,7 +167,7 @@ func (w *ActorWorkflow) ensureAteletTerminated(ctx context.Context, actorRef res
 	workerPodNs := assignment.GetWorkerNamespace()
 	workerPodName := assignment.GetWorkerPod()
 
-	conn, err := w.dialer.DialForWorker(workerPodNs, workerPodName)
+	conn, err := dialer.DialForWorker(workerPodNs, workerPodName)
 	if err != nil {
 		if errors.Is(err, ErrWorkerPodNotFound) {
 			slog.InfoContext(ctx, "worker pod not found, treating as terminated", slog.String("workerNamespace", workerPodNs), slog.String("workerPod", workerPodName))

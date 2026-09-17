@@ -29,7 +29,7 @@ import (
 )
 
 // crashOnAteletFailure crashes the actor if atelet returned an error.
-func crashOnAteletFailure(ctx context.Context, st crashActorStore, actorRef resources.ActorRef, err error, opName string) error {
+func crashOnAteletFailure(ctx context.Context, st crashActorStore, dialer *AteletDialer, actorRef resources.ActorRef, err error, opName string) error {
 	attrs := ateattr.ActorRefLogAttrs(actorRef)
 	attrs = append(attrs, ateattr.FailureLogAttrs(ateattr.ReasonUnknown)...)
 	attrs = append(attrs,
@@ -38,16 +38,16 @@ func crashOnAteletFailure(ctx context.Context, st crashActorStore, actorRef reso
 	)
 	slog.LogAttrs(ctx, slog.LevelError, "Setting Actor to crashed due to error", attrs...)
 
-	if cerr := crashActor(ctx, st, actorRef, opName, ateattr.ReasonUnknown); cerr != nil {
+	if cerr := crashActor(ctx, st, dialer, actorRef, opName, ateattr.ReasonUnknown); cerr != nil {
 		slog.ErrorContext(ctx, "Failed to crash actor", slog.Any("err", cerr))
 		return cerr
 	}
 	return status.Errorf(codes.DataLoss, "actor %s crashed", actorRef)
 }
 
-// crashActor moves the actor to CRASHED state and frees the worker it was
-// assigned to, if any, so the worker can host other actors.
-func crashActor(ctx context.Context, st crashActorStore, actorRef resources.ActorRef, opName, reason string) error {
+// crashActor terminates the actor's workload on its worker (if any), frees
+// the worker claim, and moves the actor to CRASHED state.
+func crashActor(ctx context.Context, st crashActorStore, dialer *AteletDialer, actorRef resources.ActorRef, opName, reason string) error {
 	actor, err := st.GetActor(ctx, actorRef)
 	if err != nil {
 		return fmt.Errorf("while loading actor to crash: %w", err)
@@ -57,6 +57,20 @@ func crashActor(ctx context.Context, st crashActorStore, actorRef resources.Acto
 	opName = ateattr.NormalizeOperationName(opName)
 	if reason == "" {
 		reason = ateattr.ReasonUnknown
+	}
+
+	// Terminate before releasing the worker or clearing the assignment below:
+	// once the assignment is gone, nothing can find the worker to tear the
+	// workload down.
+	actorTemplate, err := resolveActorTemplate(ctx, st, actor)
+	if errors.Is(err, errActorTemplateNotFound) {
+		actorTemplate, err = nil, nil
+	}
+	if err != nil {
+		return fmt.Errorf("while resolving actor template to terminate workload: %w", err)
+	}
+	if err := terminateWorkload(ctx, st, dialer, actorRef, actor, actorTemplate); err != nil {
+		return fmt.Errorf("while terminating workload to crash actor: %w", err)
 	}
 
 	// Release the worker before moving the actor to the terminal CRASHED state.
@@ -114,12 +128,14 @@ func logActorCrashed(ctx context.Context, actor *ateapipb.Actor, opName, reason 
 }
 
 // crashActorStore encapsulates the subset of store operations needed to crash
-// an actor.
+// an actor, including terminating its workload on atelet beforehand.
 type crashActorStore interface {
 	GetActor(ctx context.Context, actorRef resources.ActorRef) (*ateapipb.Actor, error)
 	UpdateActor(ctx context.Context, actorRef resources.ActorRef, precondition store.Precondition, mutate func(toUpdate *ateapipb.Actor) error) (*ateapipb.Actor, error)
 	GetWorker(ctx context.Context, name string) (*ateapipb.Worker, error)
 	ReleaseActorFromWorker(ctx context.Context, workerName string, actorUID string) (*ateapipb.Worker, error)
+	GetActorTemplate(ctx context.Context, templateRef resources.ActorTemplateRef) (*ateapipb.ActorTemplate, error)
+	GetWorkerAssignment(ctx context.Context, workerName, actorUID string) (*ateapipb.ActorAssignment, error)
 }
 
 // releaseWorker clears the worker's assignment if it still points at the given

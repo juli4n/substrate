@@ -160,7 +160,7 @@ func (w *ActorWorkflow) ensureAteletPaused(ctx context.Context, actorRef resourc
 	assignment := actor.GetStatus().GetWorkerAssignment()
 	if assignment == nil {
 		// Missing active worker pod reference in PAUSING state indicates corrupted store state.
-		if err := crashActor(ctx, w.store, actorRef, ateattr.OperationPause, ateattr.ReasonCorruptedAssignment); err != nil {
+		if err := crashActor(ctx, w.store, w.dialer, actorRef, ateattr.OperationPause, ateattr.ReasonCorruptedAssignment); err != nil {
 			slog.ErrorContext(ctx, "Failed to crash actor", slog.String("err", err.Error()))
 		}
 		return "", status.Errorf(codes.FailedPrecondition, "CallAteletPause prerequisite not met for Actor: %s. No worker assignment", actorRef)
@@ -170,7 +170,7 @@ func (w *ActorWorkflow) ensureAteletPaused(ctx context.Context, actorRef resourc
 	if err != nil {
 		if errors.Is(err, ErrWorkerPodNotFound) {
 			slog.ErrorContext(ctx, "Worker pod gone before checkpoint, crashing actor", "namespace", assignment.GetWorkerNamespace(), "pod", assignment.GetWorkerPod(), "in_progress_local_snapshot_name", actor.GetStatus().GetInProgressLocalSnapshotName())
-			if err := crashActor(ctx, w.store, actorRef, ateattr.OperationPause, ateattr.ReasonWorkerPodGone); err != nil {
+			if err := crashActor(ctx, w.store, w.dialer, actorRef, ateattr.OperationPause, ateattr.ReasonWorkerPodGone); err != nil {
 				slog.ErrorContext(ctx, "Failed to crash actor", slog.String("err", err.Error()))
 			}
 			return "", fmt.Errorf("actor is CRASHED because its worker pod is gone and no snapshot was written")
@@ -207,7 +207,7 @@ func (w *ActorWorkflow) ensureAteletPaused(ctx context.Context, actorRef resourc
 
 	_, err = client.Checkpoint(ctx, req)
 	if err != nil {
-		return wireSnapshotScope, crashOnAteletFailure(ctx, w.store, actorRef, err, ateattr.OperationPause)
+		return wireSnapshotScope, crashOnAteletFailure(ctx, w.store, w.dialer, actorRef, err, ateattr.OperationPause)
 	}
 	return wireSnapshotScope, nil
 }

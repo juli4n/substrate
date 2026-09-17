@@ -37,7 +37,7 @@ func newWorkerDeleteWorkflow(t *testing.T) (*WorkerWorkflow, store.Interface) {
 	t.Helper()
 	persistence, cleanup := storetest.SetupTestStore(t)
 	t.Cleanup(cleanup)
-	return NewWorkerWorkflow(persistence), persistence
+	return NewWorkerWorkflow(persistence, newDanglingDialer()), persistence
 }
 
 // apiActorRef names the Actor seedAPIActor stores.
@@ -87,7 +87,7 @@ func TestDeleteWorkerWorkflow_DrainsBeforeSweeping(t *testing.T) {
 	actor := seedAPIActor(t, ctx, persistence, ateapipb.ActorState_ACTOR_STATE_RUNNING)
 	assignAPIWorker(t, ctx, persistence, apiWorkerName, actor.GetMetadata().GetUid())
 
-	wf := NewWorkerWorkflow(failingUpdateActorStore{Interface: persistence, err: errors.New("release failed")})
+	wf := NewWorkerWorkflow(failingUpdateActorStore{Interface: persistence, err: errors.New("release failed")}, newDanglingDialer())
 	if _, err := wf.DeleteWorker(ctx, apiWorkerName, store.DeletePreconditions{}); err == nil {
 		t.Fatal("DeleteWorker() = nil error, want the release failure reported")
 	}
@@ -307,7 +307,7 @@ func TestDeleteWorkerWorkflow_FailedReleaseKeepsWorker(t *testing.T) {
 			actor := seedAPIActor(t, ctx, persistence, ateapipb.ActorState_ACTOR_STATE_RUNNING)
 			assignAPIWorker(t, ctx, persistence, apiWorkerName, actor.GetMetadata().GetUid())
 
-			wf := NewWorkerWorkflow(failingUpdateActorStore{Interface: persistence, err: tc.updateErr})
+			wf := NewWorkerWorkflow(failingUpdateActorStore{Interface: persistence, err: tc.updateErr}, newDanglingDialer())
 			_, err := wf.DeleteWorker(ctx, apiWorkerName, store.DeletePreconditions{})
 			if err == nil {
 				t.Fatal("DeleteWorker() = nil error, want the release failure reported")
@@ -340,7 +340,7 @@ func TestDeleteWorkerWorkflow_ActorDeletedDuringRelease(t *testing.T) {
 	actor := seedAPIActor(t, ctx, persistence, ateapipb.ActorState_ACTOR_STATE_RUNNING)
 	assignAPIWorker(t, ctx, persistence, apiWorkerName, actor.GetMetadata().GetUid())
 
-	wf := NewWorkerWorkflow(failingUpdateActorStore{Interface: persistence, err: store.ErrNotFound})
+	wf := NewWorkerWorkflow(failingUpdateActorStore{Interface: persistence, err: store.ErrNotFound}, newDanglingDialer())
 	if _, err := wf.DeleteWorker(ctx, apiWorkerName, store.DeletePreconditions{}); err != nil {
 		t.Fatalf("DeleteWorker() failed: %v", err)
 	}
@@ -363,6 +363,70 @@ func TestDeleteWorkerWorkflow_AbsentReportsNotFoundThroughStepWrap(t *testing.T)
 	}
 	if want := "step LoadWorkerForDelete"; !strings.Contains(err.Error(), want) {
 		t.Errorf("DeleteWorker() error = %q, want it to name the step it failed at (%q)", err, want)
+	}
+}
+
+func TestDeleteWorkerWorkflow_TerminatesWorkloadBeforeReleasing(t *testing.T) {
+	ctx := context.Background()
+	persistence, cleanup := storetest.SetupTestStore(t)
+	defer cleanup()
+	aw, atelet := newWireCaptureWorkflow(t, persistence)
+
+	actorRef := resources.ActorRef{Atespace: "team-a", Name: "actor-1"}
+	seedWiredActor(t, ctx, persistence, actorRef)
+
+	wf := NewWorkerWorkflow(persistence, aw.dialer)
+	if _, err := wf.DeleteWorker(ctx, "worker-1", store.DeletePreconditions{}); err != nil {
+		t.Fatalf("DeleteWorker: %v", err)
+	}
+
+	req := atelet.terminateRequest()
+	if req == nil {
+		t.Fatal("atelet did not receive a Terminate request")
+	}
+	if got, want := req.GetActorName(), actorRef.Name; got != want {
+		t.Errorf("TerminateRequest.ActorName = %q, want %q", got, want)
+	}
+
+	got, err := persistence.GetActor(ctx, actorRef)
+	if err != nil {
+		t.Fatalf("GetActor: %v", err)
+	}
+	if got.GetStatus().GetState() != ateapipb.ActorState_ACTOR_STATE_CRASHED {
+		t.Errorf("actor state = %v, want CRASHED", got.GetStatus().GetState())
+	}
+	if got.GetStatus().GetWorkerAssignment() != nil {
+		t.Errorf("actor worker assignment = %v, want cleared", got.GetStatus().GetWorkerAssignment())
+	}
+}
+
+func TestDeleteWorkerWorkflow_TerminateFailureBlocksRelease(t *testing.T) {
+	ctx := context.Background()
+	persistence, cleanup := storetest.SetupTestStore(t)
+	defer cleanup()
+	aw, atelet := newWireCaptureWorkflow(t, persistence)
+	atelet.setTerminateErr(status.Error(codes.Internal, "worker unreachable"))
+
+	actorRef := resources.ActorRef{Atespace: "team-a", Name: "actor-1"}
+	seedWiredActor(t, ctx, persistence, actorRef)
+
+	wf := NewWorkerWorkflow(persistence, aw.dialer)
+	if _, err := wf.DeleteWorker(ctx, "worker-1", store.DeletePreconditions{}); err == nil {
+		t.Fatal("DeleteWorker() = nil error, want the Terminate failure reported")
+	}
+
+	if _, err := persistence.GetWorker(ctx, "worker-1"); err != nil {
+		t.Errorf("worker gone after a failed release: %v", err)
+	}
+	got, err := persistence.GetActor(ctx, actorRef)
+	if err != nil {
+		t.Fatalf("GetActor: %v", err)
+	}
+	if got.GetStatus().GetState() != ateapipb.ActorState_ACTOR_STATE_RUNNING {
+		t.Errorf("actor state = %v, want RUNNING (release must not land when Terminate fails)", got.GetStatus().GetState())
+	}
+	if got.GetStatus().GetWorkerAssignment() == nil {
+		t.Error("WorkerAssignment cleared, want preserved so the retry can re-terminate")
 	}
 }
 

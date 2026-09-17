@@ -152,9 +152,10 @@ func (w *WorkerWorkflow) ensureBoundActorsReleased(ctx context.Context, worker *
 
 // releaseBoundActor resets one Actor bound to the Worker. An Actor that already
 // reached ACTOR_STATE_SUSPENDED saved its state cleanly during graceful
-// termination, so it is left untouched and remains resumable. An Actor that was
-// still running when the pod disappeared is moved to ACTOR_STATE_CRASHED and its
-// pod pointers are cleared.
+// termination (atelet's Checkpoint already succeeded, so there is nothing left
+// running to tear down), so it is left untouched and remains resumable. An
+// Actor that was still running when the pod disappeared is terminated on
+// atelet, moved to ACTOR_STATE_CRASHED, and its pod pointers are cleared.
 //
 // Nothing to release is the common case and reports success: a superseded
 // assignment and an Actor that has since moved elsewhere both leave no Actor
@@ -200,6 +201,21 @@ func (w *WorkerWorkflow) releaseBoundActor(ctx context.Context, worker *ateapipb
 		opName = ateattr.OperationSuspend
 	case ateapipb.ActorState_ACTOR_STATE_PAUSING:
 		opName = ateattr.OperationPause
+	}
+
+	// Terminate before clearing the actor's pointer at the Worker below: once
+	// that pointer is gone, nothing can find the worker to tear the workload
+	// down. The pod is usually already gone too (that is why this path runs
+	// at all), in which case this is a no-op.
+	actorTemplate, err := resolveActorTemplate(ctx, w.store, actor)
+	if errors.Is(err, errActorTemplateNotFound) {
+		actorTemplate, err = nil, nil
+	}
+	if err != nil {
+		return fmt.Errorf("while resolving actor template to terminate workload: %w", err)
+	}
+	if err := terminateWorkload(ctx, w.store, w.dialer, actorRef, actor, actorTemplate); err != nil {
+		return fmt.Errorf("while terminating workload to release actor from worker %s: %w", name, err)
 	}
 
 	wasAlreadyCrashed := actor.GetStatus().GetState() == ateapipb.ActorState_ACTOR_STATE_CRASHED

@@ -267,7 +267,7 @@ func TestCrashActor(t *testing.T) {
 				tt.setup(t, ctx, st)
 			}
 
-			err := crashActor(ctx, st, actorRef, ateattr.OperationUnknown, ateattr.ReasonUnknown)
+			err := crashActor(ctx, st, newDanglingDialer(), actorRef, ateattr.OperationUnknown, ateattr.ReasonUnknown)
 
 			tt.check(t, ctx, st, err)
 		})
@@ -343,7 +343,7 @@ func TestCrashOnAteletFailure(t *testing.T) {
 				seedActor(t, ctx, st, actorRef)
 			}
 
-			err := crashOnAteletFailure(ctx, st, actorRef, tt.err, ateattr.OperationUnknown)
+			err := crashOnAteletFailure(ctx, st, newDanglingDialer(), actorRef, tt.err, ateattr.OperationUnknown)
 
 			tt.check(t, ctx, st, err)
 		})
@@ -396,7 +396,7 @@ func TestCrashActor_Metrics(t *testing.T) {
 	}
 	storetest.MustCreateActor(t, ctx, st, actor)
 
-	if err := crashActor(ctx, st, actorRef, ateattr.OperationResume, ateattr.ReasonCorruptedAssignment); err != nil {
+	if err := crashActor(ctx, st, newDanglingDialer(), actorRef, ateattr.OperationResume, ateattr.ReasonCorruptedAssignment); err != nil {
 		t.Fatalf("crashActor: %v", err)
 	}
 
@@ -497,7 +497,7 @@ func TestCrashActorReleaseFailureLeavesWorkerReclaimable(t *testing.T) {
 	seedWorker(t, ctx, st, actorRef)
 
 	releaseErr := errors.New("state store unavailable")
-	err := crashActor(ctx, failingReleaseStore{Interface: st, err: releaseErr}, actorRef, ateattr.OperationUnknown, ateattr.ReasonUnknown)
+	err := crashActor(ctx, failingReleaseStore{Interface: st, err: releaseErr}, newDanglingDialer(), actorRef, ateattr.OperationUnknown, ateattr.ReasonUnknown)
 
 	if err == nil {
 		t.Fatal("crashActor() = nil, want error")
@@ -523,6 +523,96 @@ func TestCrashActorReleaseFailureLeavesWorkerReclaimable(t *testing.T) {
 	// persist): it is not leaked, and a retry will reclaim it.
 	if firstAssignment(t, st, "uid") == nil {
 		t.Error("worker assignment = nil, want still assigned (release failed, must remain retriable)")
+	}
+}
+
+// seedWiredActor stores an actor assigned to the worker/pod pair
+// newWireCaptureWorkflow's dialer resolves to the fake atelet.
+func seedWiredActor(t *testing.T, ctx context.Context, st store.Interface, actorRef resources.ActorRef) *ateapipb.Actor {
+	t.Helper()
+	storetest.MustCreateActor(t, ctx, st, &ateapipb.Actor{
+		Metadata: &ateapipb.ResourceMetadata{Name: actorRef.Name, Atespace: actorRef.Atespace},
+		Status: &ateapipb.ActorStatus{
+			State:                 ateapipb.ActorState_ACTOR_STATE_RUNNING,
+			WorkerAssignment:      wireTestAssignment(),
+			InProgressSnapshotUri: "gs://bucket/atespaces/as/actors/uid/snapshots/reserved-snapshot",
+		},
+	})
+	actor, err := st.GetActor(ctx, actorRef)
+	if err != nil {
+		t.Fatalf("GetActor: %v", err)
+	}
+	if _, err := st.CreateWorker(ctx, &ateapipb.Worker{
+		Metadata:        &ateapipb.ResourceMetadata{Name: "worker-1"},
+		WorkerNamespace: "worker-ns",
+		WorkerPool:      "pool",
+		WorkerPod:       "pod-1",
+		WorkerPodUid:    "worker-pod-uid",
+		Status:          &ateapipb.WorkerStatus{},
+	}); err != nil {
+		t.Fatalf("CreateWorker: %v", err)
+	}
+	seedAssignment(t, st, "worker-1", &ateapipb.ActorAssignment{
+		Actor:    &ateapipb.ObjectRef{Atespace: actorRef.Atespace, Name: actorRef.Name},
+		ActorUid: actor.GetMetadata().GetUid(),
+	})
+	return actor
+}
+
+func TestCrashActor_TerminatesWorkloadBeforeClearingAssignment(t *testing.T) {
+	ctx := context.Background()
+	persistence, cleanup := storetest.SetupTestStore(t)
+	defer cleanup()
+	w, atelet := newWireCaptureWorkflow(t, persistence)
+
+	actorRef := resources.ActorRef{Atespace: "team-a", Name: "actor-1"}
+	seedWiredActor(t, ctx, persistence, actorRef)
+
+	if err := crashActor(ctx, w.store, w.dialer, actorRef, ateattr.OperationUnknown, ateattr.ReasonUnknown); err != nil {
+		t.Fatalf("crashActor: %v", err)
+	}
+
+	req := atelet.terminateRequest()
+	if req == nil {
+		t.Fatal("atelet did not receive a Terminate request")
+	}
+	if got, want := req.GetActorName(), actorRef.Name; got != want {
+		t.Errorf("TerminateRequest.ActorName = %q, want %q", got, want)
+	}
+	if got, want := req.GetTargetAteomUid(), "worker-pod-uid"; got != want {
+		t.Errorf("TerminateRequest.TargetAteomUid = %q, want %q", got, want)
+	}
+
+	assertCrashed(t, ctx, persistence, actorRef)
+}
+
+func TestCrashActor_TerminateFailureBlocksCrash(t *testing.T) {
+	ctx := context.Background()
+	persistence, cleanup := storetest.SetupTestStore(t)
+	defer cleanup()
+	w, atelet := newWireCaptureWorkflow(t, persistence)
+	atelet.setTerminateErr(status.Error(codes.Internal, "worker unreachable"))
+
+	actorRef := resources.ActorRef{Atespace: "team-a", Name: "actor-1"}
+	seedWiredActor(t, ctx, persistence, actorRef)
+
+	err := crashActor(ctx, w.store, w.dialer, actorRef, ateattr.OperationUnknown, ateattr.ReasonUnknown)
+	if err == nil {
+		t.Fatal("crashActor() = nil, want error")
+	}
+
+	got, gerr := persistence.GetActor(ctx, actorRef)
+	if gerr != nil {
+		t.Fatalf("GetActor() = %v, want nil", gerr)
+	}
+	if got.GetStatus().GetState() != ateapipb.ActorState_ACTOR_STATE_RUNNING {
+		t.Errorf("status = %v, want %v (actor must not be crashed when Terminate fails)", got.GetStatus().GetState(), ateapipb.ActorState_ACTOR_STATE_RUNNING)
+	}
+	if got.GetStatus().GetWorkerAssignment() == nil {
+		t.Error("WorkerAssignment cleared, want preserved so the retry can re-terminate")
+	}
+	if firstAssignment(t, persistence, "worker-1") == nil {
+		t.Error("worker assignment released despite Terminate failure, want untouched")
 	}
 }
 
@@ -586,7 +676,7 @@ func TestCrashActor_RecordAndCounterAgree(t *testing.T) {
 		Status:        &ateapipb.ActorStatus{State: ateapipb.ActorState_ACTOR_STATE_RUNNING},
 	})
 
-	if err := crashActor(ctx, st, actorRef, ateattr.OperationResume, ateattr.ReasonWorkerPodGone); err != nil {
+	if err := crashActor(ctx, st, newDanglingDialer(), actorRef, ateattr.OperationResume, ateattr.ReasonWorkerPodGone); err != nil {
 		t.Fatalf("crashActor: %v", err)
 	}
 	if len(*records) != 1 {
@@ -617,7 +707,7 @@ func TestCrashActor_RecordAndCounterAgree(t *testing.T) {
 	}
 
 	// Re-crashing an already-crashed actor must move neither signal.
-	if err := crashActor(ctx, st, actorRef, ateattr.OperationResume, ateattr.ReasonWorkerPodGone); err != nil {
+	if err := crashActor(ctx, st, newDanglingDialer(), actorRef, ateattr.OperationResume, ateattr.ReasonWorkerPodGone); err != nil {
 		t.Fatalf("second crashActor: %v", err)
 	}
 	if len(*records) != 1 {
