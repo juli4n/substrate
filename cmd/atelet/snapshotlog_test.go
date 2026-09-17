@@ -18,13 +18,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"testing"
 	"time"
 
 	"github.com/agent-substrate/substrate/internal/ateattr"
-	"github.com/agent-substrate/substrate/internal/ateerrors"
 	"github.com/agent-substrate/substrate/internal/resources"
 )
 
@@ -184,11 +184,11 @@ func TestSnapshotLogAttrs(t *testing.T) {
 				templateName:      testTemplateName,
 				scope:             ateattr.SnapshotScopeFull,
 			},
-			err:    fmt.Errorf("%w: while fetching snapshot manifest", ateerrors.ReasonFailedGetExternalObject),
+			err:    errors.New("while fetching snapshot manifest: connection refused"),
 			phases: []phase{{ateattr.SnapshotPhaseTotal, 700 * time.Millisecond}},
 			wantStrings: map[string]string{
 				"ate.actor.uid":      testActorUID,
-				"ate.failure.reason": string(ateerrors.ReasonFailedGetExternalObject),
+				"ate.failure.reason": ateattr.ReasonUnknown,
 			},
 			wantNumbers: map[string]float64{
 				"ate.actor.restore.duration.total": 0.7,

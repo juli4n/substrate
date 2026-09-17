@@ -19,7 +19,6 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/agent-substrate/substrate/internal/ateerrors"
 	"github.com/agent-substrate/substrate/internal/proto/ateletpb"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 )
@@ -146,8 +145,8 @@ func TestResolveProcessArgs(t *testing.T) {
 				t.Fatalf("resolveProcessArgs(%v, %v, %v) err = %v, wantErr %v", tc.image, tc.command, tc.args, err, tc.wantErr)
 			}
 			if err != nil {
-				if !errors.Is(err, ateerrors.ReasonInvalidContainerConfig) {
-					t.Errorf("empty-argv error must carry ReasonInvalidContainerConfig, got: %v", err)
+				if !errors.Is(err, errNoCommandSpecified) {
+					t.Errorf("empty-argv error must be errNoCommandSpecified, got: %v", err)
 				}
 				return
 			}

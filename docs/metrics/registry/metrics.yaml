@@ -248,56 +248,17 @@ groups:
   - id: registry.ate.failure
     type: attribute_group
     brief: >
-      The failure reasons of Substrate. These instruments use this key and not
-      error.type. The handler returns a domain error. The interceptor sets the
-      gRPC status only after the handler returns. Thus error.type shows Unknown
-      for almost each real failure.
+      The failure reasons ateapi's control plane crashes an actor with. Every
+      atelet RPC failure crashes the actor unconditionally and reports
+      unknown here: the cause does not cross the atelet-to-ateapi process
+      boundary. Only a failure the control plane detects itself (a corrupted
+      assignment, a worker gone, a worker reassigned) gets a specific reason.
     attributes:
       - id: ate.failure.reason
         stability: development
         brief: The cause of the failure.
         type:
           members:
-            - id: terminal_file_system_error
-              stability: development
-              value: TERMINAL_FILE_SYSTEM_ERROR
-              brief: A permanent file system fault on the node. Usually the disks of the node are full.
-            - id: invalid_sandbox_asset
-              stability: development
-              value: INVALID_SANDBOX_ASSET
-              brief: A sandbox asset is absent or bad.
-            - id: invalid_checkpoint_result
-              stability: development
-              value: INVALID_CHECKPOINT_RESULT
-              brief: ateom returned a checkpoint that is not valid.
-            - id: failed_save_snapshot
-              stability: development
-              value: FAILED_SAVE_SNAPSHOT
-              brief: atelet could not write the snapshot.
-            - id: invalid_object_url
-              stability: development
-              value: INVALID_OBJECT_URL
-              brief: The URL of the snapshot object is bad.
-            - id: failed_get_external_object
-              stability: development
-              value: FAILED_GET_EXTERNAL_OBJECT
-              brief: atelet could not read the snapshot from object storage. Usually the storage backend has a fault.
-            - id: invalid_container_config
-              stability: development
-              value: INVALID_CONTAINER_CONFIG
-              brief: The container configuration of the ActorTemplate is not valid.
-            - id: local_snapshot_gone
-              stability: development
-              value: LOCAL_SNAPSHOT_GONE
-              brief: The local snapshot on the node no longer exists.
-            - id: workload_not_ready
-              stability: development
-              value: WORKLOAD_NOT_READY
-              brief: >
-                A container started but never passed its readyz probe before the
-                deadline of the probe. A slow node confounds this value: a cold
-                image or a throttled CPU also runs the probe out of time. The
-                phases of ate.actor.restore.duration separate the two.
             - id: corrupted_assignment
               stability: development
               value: CORRUPTED_ASSIGNMENT
@@ -314,8 +275,8 @@ groups:
               stability: development
               value: UNKNOWN
               brief: >
-                A failure with no reason. Substrate does not make a value from
-                the error message. Thus the list of values stays short. This
+                A failure with no reason, including every atelet RPC failure.
+                Substrate does not make a value from the error message. This
                 value asserts no fault domain: read ate.failure.domain, which
                 reports unknown here and not infrastructure.
 
@@ -335,17 +296,6 @@ groups:
               stability: development
               value: infrastructure
               brief: Substrate failed. The node, the store, the object storage, the control plane.
-            - id: workload
-              stability: development
-              value: workload
-              brief: >
-                The owner of the actor fixes this, not the operator of the
-                platform. It covers a bad ActorTemplate as well as a process
-                that does not start. For the reasons that the actor reports
-                about itself, such as an exit or a probe that never passes,
-                this value is a report and not a proof: the actor chooses its
-                own exit. The reasons that Substrate measures, such as a
-                template that resolves to no runnable process, are not.
             - id: unknown
               stability: development
               value: unknown
@@ -813,10 +763,7 @@ groups:
     note: >
       This instrument shows where the cold start time goes after ateapi hands
       the work to atelet. The phases occur at the same time. They do not add up
-      to the total. Use the total phase as the denominator. If the operation
-      fails, atelet puts ate.failure.reason on the phase that failed and on the
-      total. It puts the key on no other phase. Thus you can still query the
-      phases that were correct.
+      to the total. Use the total phase as the denominator.
     annotations:
       substrate:
         emitted_by: [atelet]
@@ -839,12 +786,6 @@ groups:
       - ref: ate.sandbox.class
         requirement_level:
           conditionally_required: The class is known.
-      - ref: ate.failure.reason
-        requirement_level:
-          conditionally_required: The operation failed. The key occurs only on the phase that failed and on the total.
-      - ref: ate.failure.domain
-        requirement_level:
-          conditionally_required: ate.failure.reason occurs. The two keys always occur together.
 
   - id: metric.ate.actor.checkpoint.duration
     type: metric
@@ -879,12 +820,6 @@ groups:
       - ref: ate.sandbox.class
         requirement_level:
           conditionally_required: The class is known.
-      - ref: ate.failure.reason
-        requirement_level:
-          conditionally_required: The operation failed. The key occurs only on the phase that failed and on the total.
-      - ref: ate.failure.domain
-        requirement_level:
-          conditionally_required: ate.failure.reason occurs. The two keys always occur together.
 
   - id: metric.atelet.snapshot.size
     type: metric

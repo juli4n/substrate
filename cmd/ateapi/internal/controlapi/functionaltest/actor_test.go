@@ -38,7 +38,6 @@ import (
 	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/testing/protocmp"
-	"k8s.io/apimachinery/pkg/util/wait"
 )
 
 // TestCreateActor_Success tests the happy path for creating an actor.
@@ -2049,17 +2048,20 @@ func TestResumeActor_RequiresBothSelectorsToMatch(t *testing.T) {
 	}
 }
 
-// TestResumeActor_Reentrancy tests the failure recovery and re-entrancy of ResumeActor.
+// TestResumeActor_RestoreFailureCrashesActor verifies that a Restore RPC
+// failure crashes the actor unconditionally rather than leaving it RESUMING
+// for a client-driven retry: every atelet RPC failure is now fatal, so there
+// is no reentrant recovery path left, and a subsequent ResumeActor call must
+// fail since a CRASHED actor cannot be resumed.
 // Workflow:
 // 1. Creates a mock ActorTemplate.
 // 2. Creates a mock Atelet Pod and a mock Worker Pod.
 // 3. Waits for the WorkerPoolSyncer to mirror the worker to store.
 // 4. Creates an actor in SUSPENDED state.
 // 5. Configures fake Atelet to FAIL on Restore.
-// 6. Calls ResumeActor and verifies it fails, but actor state becomes RESUMING.
-// 7. Configures fake Atelet to SUCCEED on Restore.
-// 8. Calls ResumeActor again and verifies it succeeds and actor state becomes RUNNING.
-func TestResumeActor_Reentrancy(t *testing.T) {
+// 6. Calls ResumeActor and verifies it fails and the actor state becomes CRASHED.
+// 7. Calls ResumeActor again and verifies it is rejected (CRASHED is not resumable).
+func TestResumeActor_RestoreFailureCrashesActor(t *testing.T) {
 	ns := namespaceForTest("ns-resume-reentrancy")
 	tc := setupTest(t, ns)
 	defer tc.cleanup()
@@ -2088,37 +2090,25 @@ func TestResumeActor_Reentrancy(t *testing.T) {
 		t.Fatalf("expected ResumeActor to fail due to atelet error")
 	}
 
-	// Verify actor state is RESUMING in the store.
+	// Verify the actor crashed and its worker assignment was released.
 	actor, err := tc.persistence.GetActor(context.Background(), resources.ActorRef{Atespace: testAtespace, Name: name})
 	if err != nil {
 		t.Fatalf("failed to get actor from store: %v", err)
 	}
-	if actor.GetStatus().GetState() != ateapipb.ActorState_ACTOR_STATE_RESUMING {
-		t.Errorf("expected state RESUMING, got %v", actor.GetStatus().GetState())
+	if actor.GetStatus().GetState() != ateapipb.ActorState_ACTOR_STATE_CRASHED {
+		t.Errorf("expected state CRASHED, got %v", actor.GetStatus().GetState())
+	}
+	if actor.GetStatus().GetWorkerAssignment() != nil {
+		t.Errorf("expected WorkerAssignment cleared, got %v", actor.GetStatus().GetWorkerAssignment())
 	}
 
-	// STEP 2: Make Atelet SUCCEED!
+	// STEP 2: A retry must be rejected; a crashed actor has no resume edge.
 	tc.fakeAtelet.FailRestore = nil
-	tc.fakeAtelet.RestoreCalled = false // reset for verification
 
-	_, err = tc.client.ResumeActor(context.Background(), &ateapipb.ResumeActorRequest{
+	if _, err := tc.client.ResumeActor(context.Background(), &ateapipb.ResumeActorRequest{
 		Actor: &ateapipb.ObjectRef{Atespace: testAtespace, Name: name},
-	})
-	if err != nil {
-		t.Fatalf("ResumeActor failed on retry: %v", err)
-	}
-
-	if !tc.fakeAtelet.RestoreCalled {
-		t.Errorf("expected Restore to be called on retry")
-	}
-
-	// Verify actor state is RUNNING!
-	actor, err = tc.persistence.GetActor(context.Background(), resources.ActorRef{Atespace: testAtespace, Name: name})
-	if err != nil {
-		t.Fatalf("failed to get actor from store: %v", err)
-	}
-	if actor.GetStatus().GetState() != ateapipb.ActorState_ACTOR_STATE_RUNNING {
-		t.Errorf("expected state RUNNING, got %v", actor.GetStatus().GetState())
+	}); err == nil {
+		t.Fatalf("expected retry against a CRASHED actor to fail")
 	}
 }
 
@@ -2690,201 +2680,6 @@ func TestResumeActor_ReleasesStaleWorkerWhenPoolBecomesIneligible(t *testing.T) 
 	}
 }
 
-// TestResumeActor_ReleasesDrainingWorkerFromPriorAttempt exercises the reuse-loop
-// change in AssignWorkerStep.Execute: a worker still assigned to the actor from a
-// previous (failed) attempt that has since entered DRAINING must not be reused —
-// it is released and the actor is crashed.
-func TestResumeActor_CrashesIfAssignedWorkerIsDraining(t *testing.T) {
-	ns := namespaceForTest("ns-resume-release-draining")
-	tc := setupTest(t, ns)
-	defer tc.cleanup()
-
-	// createTemplate sets up pool1 (labeled pool=<ns>) + tmpl1 (selecting it) with
-	// a golden snapshot, so resume drives Restore. Two workers share the pool.
-	createTemplate(t, tc, ns)
-	createWorkerPod(t, tc, ns, "worker-a", "node1", "pool1")
-	createWorkerPod(t, tc, ns, "worker-b", "node1", "pool1")
-
-	id := "id1"
-	if _, err := tc.client.CreateActor(context.Background(), &ateapipb.CreateActorRequest{
-		Actor: &ateapipb.Actor{
-			Metadata: &ateapipb.ResourceMetadata{
-				Atespace: testAtespace,
-				Name:     id,
-			},
-			ActorTemplate: &ateapipb.ObjectRef{Atespace: testAtespace, Name: "tmpl1"},
-		},
-	}); err != nil {
-		t.Fatalf("CreateActor failed: %v", err)
-	}
-
-	// First resume fails after a worker is assigned, leaving the actor bound to
-	// that worker from a prior attempt.
-	tc.fakeAtelet.FailRestore = fmt.Errorf("mock atelet failure")
-	if _, err := tc.client.ResumeActor(context.Background(), &ateapipb.ResumeActorRequest{Actor: &ateapipb.ObjectRef{Atespace: testAtespace, Name: id}}); err == nil {
-		t.Fatalf("expected first ResumeActor to fail")
-	}
-	tc.fakeAtelet.FailRestore = nil
-
-	// Learn which worker got assigned (findFreeWorker shuffles), then mark it
-	// DRAINING as the syncer would when its pod enters Terminating.
-	getResp, err := tc.client.GetActor(context.Background(), &ateapipb.GetActorRequest{Actor: &ateapipb.ObjectRef{Atespace: testAtespace, Name: id}})
-	if err != nil {
-		t.Fatalf("GetActor failed: %v", err)
-	}
-	assignedPod := getResp.GetStatus().GetWorkerAssignment().GetWorkerPod()
-	if assignedPod == "" {
-		t.Fatalf("expected actor to be bound to a worker after the failed attempt")
-	}
-
-	assigned, err := tc.persistence.GetWorker(context.Background(), getResp.GetStatus().GetWorkerAssignment().GetWorker().GetName())
-	if err != nil {
-		t.Fatalf("GetWorker(%s) failed: %v", assignedPod, err)
-	}
-	if _, err := tc.persistence.UpdateWorker(context.Background(), assigned.GetMetadata().GetName(), store.PreconditionFrom(assigned), func(toUpdate *ateapipb.Worker) error {
-		toUpdate.Status.State = ateapipb.WorkerState_WORKER_STATE_DRAINING
-		return nil
-	}); err != nil {
-		t.Fatalf("marking worker %s draining failed: %v", assignedPod, err)
-	}
-
-	// Wait until the DRAINING state is observable, which also gives the store
-	// watch time to propagate it into the scheduler's worker cache.
-	if err := wait.PollUntilContextTimeout(context.Background(), 100*time.Millisecond, 5*time.Second, true, func(ctx context.Context) (bool, error) {
-		resp, err := tc.client.ListWorkers(ctx, &ateapipb.ListWorkersRequest{})
-		if err != nil {
-			return false, nil
-		}
-		for _, w := range resp.GetWorkers() {
-			if w.GetWorkerNamespace() == ns && w.GetWorkerPod() == assignedPod {
-				return w.GetStatus().GetState() == ateapipb.WorkerState_WORKER_STATE_DRAINING, nil
-			}
-		}
-		return false, nil
-	}); err != nil {
-		t.Fatalf("worker %s did not reach DRAINING: %v", assignedPod, err)
-	}
-
-	// Second resume must fail and crash the actor because its worker is draining.
-	_, err = tc.client.ResumeActor(context.Background(), &ateapipb.ResumeActorRequest{Actor: &ateapipb.ObjectRef{Atespace: testAtespace, Name: id}})
-	if err == nil {
-		t.Fatalf("expected second ResumeActor to fail")
-	}
-	if status.Code(err) != codes.Aborted || !strings.Contains(err.Error(), "crashed") {
-		t.Errorf("expected Aborted/crashed error, got %v", err)
-	}
-
-	getResp, err = tc.client.GetActor(context.Background(), &ateapipb.GetActorRequest{Actor: &ateapipb.ObjectRef{Atespace: testAtespace, Name: id}})
-	if err != nil {
-		t.Fatalf("GetActor failed: %v", err)
-	}
-	if got := getResp.GetStatus().GetState(); got != ateapipb.ActorState_ACTOR_STATE_CRASHED {
-		t.Errorf("expected actor state CRASHED, got %v", got)
-	}
-	if got := getResp.GetStatus().GetWorkerAssignment().GetWorkerPod(); got != "" {
-		t.Errorf("expected actor pod name to be empty, got %q", got)
-	}
-
-	// The draining worker must have been released.
-	listResp, err := tc.client.ListWorkers(context.Background(), &ateapipb.ListWorkersRequest{})
-	if err != nil {
-		t.Fatalf("ListWorkers failed: %v", err)
-	}
-	for _, w := range listResp.GetWorkers() {
-		if w.GetWorkerNamespace() != ns {
-			continue
-		}
-		if w.GetWorkerPod() == assignedPod {
-			if n := w.GetStatus().GetAllocated().GetActors(); n != 0 {
-				t.Errorf("expected draining worker %q to be released, still holds %d actors", assignedPod, n)
-			}
-		}
-	}
-}
-
-// TestUpdateActor_ReassignsPoolAcrossSuspendResume verifies that updating an
-// actor's worker_selector moves it onto a different eligible pool not just
-// on the next fresh resume, but also across a full suspend/resume cycle of
-// an already-running actor.
-// Workflow:
-//  1. Creates two WorkerPools, pool-a (tier=a) and pool-b (tier=b), both
-//     under the template's gating selector.
-//  2. Creates an actor narrowed to tier=a and resumes it; asserts it lands on
-//     pool-a/worker-a.
-//  3. Updates the actor's selector to tier=b while it's still running.
-//  4. Suspends then resumes the actor; asserts it now lands on
-//     pool-b/worker-b, proving the updated selector — not the one in effect
-//     when it was first scheduled — governs the new placement.
-func TestUpdateActor_ReassignsPoolAcrossSuspendResume(t *testing.T) {
-	ns := namespaceForTest("ns-update-actor-suspend-resume")
-	tc := setupTest(t, ns)
-	defer tc.cleanup()
-
-	createWorkerPool(t, tc, ns, "pool-a", map[string]string{"group": ns, "tier": "a"})
-	createWorkerPool(t, tc, ns, "pool-b", map[string]string{"group": ns, "tier": "b"})
-	createTemplateWithSelector(t, tc, "tmpl1", &ateapipb.Selector{
-		MatchLabels: map[string]string{"group": ns},
-	})
-
-	createWorkerPod(t, tc, ns, "worker-a", "node1", "pool-a")
-	createWorkerPod(t, tc, ns, "worker-b", "node1", "pool-b")
-
-	name := "id1"
-	_, err := tc.client.CreateActor(context.Background(), &ateapipb.CreateActorRequest{Actor: &ateapipb.Actor{
-		Metadata:      &ateapipb.ResourceMetadata{Atespace: testAtespace, Name: name},
-		ActorTemplate: &ateapipb.ObjectRef{Atespace: testAtespace, Name: "tmpl1"},
-		WorkerSelector: &ateapipb.Selector{
-			MatchLabels: map[string]string{"tier": "a"},
-		},
-	}})
-	if err != nil {
-		t.Fatalf("CreateActor failed: %v", err)
-	}
-
-	if _, err := tc.client.ResumeActor(context.Background(), &ateapipb.ResumeActorRequest{Actor: &ateapipb.ObjectRef{Atespace: testAtespace, Name: name}}); err != nil {
-		t.Fatalf("first ResumeActor failed: %v", err)
-	}
-
-	getResp, err := tc.client.GetActor(context.Background(), &ateapipb.GetActorRequest{Actor: &ateapipb.ObjectRef{Atespace: testAtespace, Name: name}})
-	if err != nil {
-		t.Fatalf("GetActor failed: %v", err)
-	}
-	if got := getResp.GetStatus().GetWorkerAssignment().GetWorkerPool(); got != "pool-a" {
-		t.Fatalf("expected actor to first resume onto pool-a, got worker_assignment.worker_pool=%q", got)
-	}
-	if got := getResp.GetStatus().GetWorkerAssignment().GetWorkerPod(); got != "worker-a" {
-		t.Fatalf("expected actor to first resume onto worker-a, got worker_assignment.worker_pod=%q", got)
-	}
-
-	getResp.WorkerSelector = &ateapipb.Selector{MatchLabels: map[string]string{"tier": "b"}}
-	if _, err := tc.client.UpdateActor(context.Background(), &ateapipb.UpdateActorRequest{
-		Actor: getResp,
-	}); err != nil {
-		t.Fatalf("UpdateActor failed: %v", err)
-	}
-
-	if _, err := tc.client.SuspendActor(context.Background(), &ateapipb.SuspendActorRequest{Actor: &ateapipb.ObjectRef{Atespace: testAtespace, Name: name}}); err != nil {
-		t.Fatalf("SuspendActor failed: %v", err)
-	}
-	if _, err := tc.client.ResumeActor(context.Background(), &ateapipb.ResumeActorRequest{Actor: &ateapipb.ObjectRef{Atespace: testAtespace, Name: name}}); err != nil {
-		t.Fatalf("second ResumeActor failed: %v", err)
-	}
-
-	getResp, err = tc.client.GetActor(context.Background(), &ateapipb.GetActorRequest{Actor: &ateapipb.ObjectRef{Atespace: testAtespace, Name: name}})
-	if err != nil {
-		t.Fatalf("GetActor failed: %v", err)
-	}
-	if got := getResp.GetStatus().GetWorkerAssignment().GetWorkerPool(); got != "pool-b" {
-		t.Errorf("expected actor to resume onto pool-b after selector update, got worker_assignment.worker_pool=%q", got)
-	}
-	if got := getResp.GetStatus().GetWorkerAssignment().GetWorkerPod(); got != "worker-b" {
-		t.Errorf("expected actor to resume onto worker-b after selector update, got worker_assignment.worker_pod=%q", got)
-	}
-	if got := getResp.GetStatus().GetState(); got != ateapipb.ActorState_ACTOR_STATE_RUNNING {
-		t.Errorf("expected actor state RUNNING after second resume, got %v", got)
-	}
-}
-
 func TestResumeActor_LeaseConflict(t *testing.T) {
 	ns := namespaceForTest("ns-resume-conflict")
 	tc := setupTest(t, ns)
@@ -2927,84 +2722,6 @@ func TestResumeActor_LeaseConflict(t *testing.T) {
 	// Wait for Request A to finish
 	if errA := <-errChan; errA != nil {
 		t.Fatalf("Request A failed: %v", errA)
-	}
-}
-
-func TestResumeActor_DanglingWorker(t *testing.T) {
-	ns := namespaceForTest("ns-resume-dangling")
-	tc := setupTest(t, ns)
-	defer tc.cleanup()
-
-	createTemplate(t, tc, ns)
-
-	// 1. Create Worker Pod A
-	createWorkerPod(t, tc, ns, "worker-a", "node1", "pool1")
-
-	name := "id1"
-	_, err := tc.client.CreateActor(context.Background(), &ateapipb.CreateActorRequest{Actor: &ateapipb.Actor{
-		Metadata:      &ateapipb.ResourceMetadata{Atespace: testAtespace, Name: name},
-		ActorTemplate: &ateapipb.ObjectRef{Atespace: testAtespace, Name: "tmpl1"},
-	}})
-	if err != nil {
-		t.Fatalf("CreateActor failed: %v", err)
-	}
-
-	// 2. Configure fake Atelet to FAIL on Restore!
-	tc.fakeAtelet.FailRestore = fmt.Errorf("mock atelet failure")
-
-	// 3. Call ResumeActor -> Expect failure
-	_, err = tc.client.ResumeActor(context.Background(), &ateapipb.ResumeActorRequest{
-		Actor: &ateapipb.ObjectRef{Atespace: testAtespace, Name: name},
-	})
-	if err == nil {
-		t.Fatalf("expected ResumeActor to fail due to atelet error")
-	}
-
-	// Verify actor state is RESUMING with worker A assigned
-	getResp, err := tc.client.GetActor(context.Background(), &ateapipb.GetActorRequest{
-		Actor: &ateapipb.ObjectRef{Atespace: testAtespace, Name: name},
-	})
-	if err != nil {
-		t.Fatalf("GetActor failed: %v", err)
-	}
-	actor := getResp
-	if actor.GetStatus().GetState() != ateapipb.ActorState_ACTOR_STATE_RESUMING {
-		t.Fatalf("expected state RESUMING, got %v", actor.GetStatus().GetState())
-	}
-	if actor.GetStatus().GetWorkerAssignment().GetWorkerPod() != "worker-a" {
-		t.Fatalf("expected worker-a assigned, got %v", actor.GetStatus().GetWorkerAssignment().GetWorkerPod())
-	}
-
-	deleteWorkerPod(t, tc, ns, "worker-a")
-
-	// 6. Create Worker Pod B
-	createWorkerPod(t, tc, ns, "worker-b", "node1", "pool1")
-
-	// 7. Configure fake Atelet to SUCCEED on Restore
-	tc.fakeAtelet.FailRestore = nil
-	tc.fakeAtelet.RestoreCalled = false // reset
-
-	// 8. Call ResumeActor again -> Expect it to fail because it is already CRASHED by background syncer.
-	_, err = tc.client.ResumeActor(context.Background(), &ateapipb.ResumeActorRequest{
-		Actor: &ateapipb.ObjectRef{Atespace: testAtespace, Name: name},
-	})
-	if err == nil {
-		t.Fatalf("expected ResumeActor to fail because worker is gone")
-	}
-	if status.Code(err) != codes.FailedPrecondition || !strings.Contains(err.Error(), "ACTOR_STATE_CRASHED") {
-		t.Errorf("expected FailedPrecondition/ACTOR_STATE_CRASHED error, got %v", err)
-	}
-
-	// Verify actor state is CRASHED and worker assignment is empty
-	actor, err = tc.persistence.GetActor(context.Background(), resources.ActorRef{Atespace: testAtespace, Name: name})
-	if err != nil {
-		t.Fatalf("failed to get actor from store: %v", err)
-	}
-	if actor.GetStatus().GetState() != ateapipb.ActorState_ACTOR_STATE_CRASHED {
-		t.Errorf("expected state CRASHED, got %v", actor.GetStatus().GetState())
-	}
-	if actor.GetStatus().GetWorkerAssignment().GetWorkerPod() != "" {
-		t.Errorf("expected worker to be unassigned, got %v", actor.GetStatus().GetWorkerAssignment().GetWorkerPod())
 	}
 }
 
@@ -3142,11 +2859,11 @@ func TestSuspendActor_FromPaused(t *testing.T) {
 	}
 }
 
-// TestSuspendActor_FromPaused_RetryAfterUploadFailure exercises client-driven
-// forward recovery on the paused path: a failed upload leaves the actor
-// SUSPENDING with its local snapshot record intact, and a retry completes the
-// suspend against the same destination.
-func TestSuspendActor_FromPaused_RetryAfterUploadFailure(t *testing.T) {
+// TestSuspendActor_FromPaused_UploadFailureCrashesActor verifies that a failed
+// upload on the paused path crashes the actor unconditionally: every atelet
+// RPC failure is now fatal, so there is no retryable path left for the client
+// to drive forward recovery on.
+func TestSuspendActor_FromPaused_UploadFailureCrashesActor(t *testing.T) {
 	ns := namespaceForTest("ns-suspend-paused-retry")
 	tc := setupTest(t, ns)
 	defer tc.cleanup()
@@ -3181,34 +2898,14 @@ func TestSuspendActor_FromPaused_RetryAfterUploadFailure(t *testing.T) {
 		t.Fatal("SuspendActor succeeded despite failing upload")
 	}
 
-	stuck, err := tc.client.GetActor(context.Background(), &ateapipb.GetActorRequest{
+	crashed, err := tc.client.GetActor(context.Background(), &ateapipb.GetActorRequest{
 		Actor: &ateapipb.ObjectRef{Atespace: testAtespace, Name: name},
 	})
 	if err != nil {
 		t.Fatalf("GetActor failed: %v", err)
 	}
-	if stuck.GetStatus().GetState() != ateapipb.ActorState_ACTOR_STATE_SUSPENDING {
-		t.Fatalf("state after failed upload = %v, want SUSPENDING (retryable)", stuck.GetStatus().GetState())
-	}
-	if stuck.GetStatus().GetLocalSnapshotInfo() == nil {
-		t.Fatal("LocalSnapshotInfo cleared by a failed upload; the retry could never find the snapshot")
-	}
-	firstDestination := tc.fakeAtelet.UploadRequest.GetDestinationSnapshotUri()
-
-	tc.fakeAtelet.Lock.Lock()
-	tc.fakeAtelet.FailUpload = nil
-	tc.fakeAtelet.Lock.Unlock()
-	retried, err := tc.client.SuspendActor(context.Background(), &ateapipb.SuspendActorRequest{
-		Actor: &ateapipb.ObjectRef{Atespace: testAtespace, Name: name},
-	})
-	if err != nil {
-		t.Fatalf("SuspendActor retry failed: %v", err)
-	}
-	if got := retried.GetActor().GetStatus().GetState(); got != ateapipb.ActorState_ACTOR_STATE_SUSPENDED {
-		t.Errorf("state after retry = %v, want SUSPENDED", got)
-	}
-	if got := tc.fakeAtelet.UploadRequest.GetDestinationSnapshotUri(); got != firstDestination {
-		t.Errorf("retry destination = %q, want the original %q (idempotent upload target)", got, firstDestination)
+	if crashed.GetStatus().GetState() != ateapipb.ActorState_ACTOR_STATE_CRASHED {
+		t.Fatalf("state after failed upload = %v, want CRASHED", crashed.GetStatus().GetState())
 	}
 }
 

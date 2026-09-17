@@ -38,7 +38,6 @@ import (
 	"time"
 
 	"github.com/agent-substrate/substrate/cmd/atelet/internal/ategcs"
-	"github.com/agent-substrate/substrate/internal/ateerrors"
 	"github.com/agent-substrate/substrate/internal/ateompath"
 	"github.com/agent-substrate/substrate/internal/proto/ateletpb"
 	"github.com/agent-substrate/substrate/internal/resources"
@@ -138,9 +137,6 @@ func recordFromRequest(sa *ateletpb.SandboxAssets) (*sandboxAssetsRecord, error)
 // present.
 func (s *AteomHerder) ensureSandboxAssets(ctx context.Context, rec *sandboxAssetsRecord) (map[string]string, error) {
 	if err := os.MkdirAll(ateompath.StaticFilesDir, 0o700); err != nil {
-		if isTerminalFileSystemErr(err) {
-			return nil, fmt.Errorf("%w: while creating static files dir: %w", ateerrors.ReasonTerminalFileSystemError, err)
-		}
 		return nil, fmt.Errorf("while creating static files dir: %w", err)
 	}
 	paths := make(map[string]string, len(rec.Assets))
@@ -174,7 +170,7 @@ func runscPathFor(paths map[string]string) string {
 // returns immediately.
 func (s *AteomHerder) fetchAsset(ctx context.Context, entry assetEntry) (string, error) {
 	if err := resources.ValidateRunscHash(entry.SHA256); err != nil {
-		return "", wrapFileSystemErr("while validating asset hash", err)
+		return "", fmt.Errorf("while validating asset hash: %w", err)
 	}
 
 	localPath := ateompath.RunSCBinaryPath(entry.SHA256)
@@ -183,7 +179,7 @@ func (s *AteomHerder) fetchAsset(ctx context.Context, entry assetEntry) (string,
 		slog.DebugContext(ctx, "Sandbox asset cache hit", slog.String("path", localPath))
 		return localPath, nil
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return "", wrapFileSystemErr("while stat-ing local file", err)
+		return "", fmt.Errorf("while stat-ing local file: %w", err)
 	}
 
 	slog.InfoContext(ctx, "Sandbox asset cache miss; downloading", slog.String("url", entry.URL), slog.String("sha256", entry.SHA256))
@@ -195,10 +191,10 @@ func (s *AteomHerder) fetchAsset(ctx context.Context, entry assetEntry) (string,
 	defer os.Remove(tmpName) // no-op if successful rename later in the function
 
 	if err := os.Chmod(tmpName, 0o755); err != nil {
-		return "", wrapFileSystemErr("while setting file mode", err)
+		return "", fmt.Errorf("while setting file mode: %w", err)
 	}
 	if err := os.Rename(tmpName, localPath); err != nil {
-		return "", wrapFileSystemErr("while renaming temp file to target", err)
+		return "", fmt.Errorf("while renaming temp file to target: %w", err)
 	}
 
 	slog.InfoContext(ctx, "Sandbox asset download complete", slog.String("path", localPath), slog.Duration("duration", time.Since(t)))
@@ -211,7 +207,7 @@ func (s *AteomHerder) fetchAsset(ctx context.Context, entry assetEntry) (string,
 // `runsc` binary.
 func (s *AteomHerder) fetchGVisorRelease(ctx context.Context, entry assetEntry) (string, error) {
 	if err := resources.ValidateRunscHash(entry.SHA256); err != nil {
-		return "", wrapFileSystemErr("while validating asset hash", err)
+		return "", fmt.Errorf("while validating asset hash: %w", err)
 	}
 
 	releaseDir := ateompath.GVisorReleaseDir(entry.SHA256)
@@ -221,7 +217,7 @@ func (s *AteomHerder) fetchGVisorRelease(ctx context.Context, entry assetEntry) 
 		slog.DebugContext(ctx, "gVisor release cache hit", slog.String("dir", releaseDir))
 		return runscPath, nil
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return "", wrapFileSystemErr("while stat-ing extracted release dir", err)
+		return "", fmt.Errorf("while stat-ing extracted release dir: %w", err)
 	}
 
 	slog.InfoContext(ctx, "gVisor release cache miss; downloading", slog.String("url", entry.URL), slog.String("sha256", entry.SHA256))
@@ -235,7 +231,7 @@ func (s *AteomHerder) fetchGVisorRelease(ctx context.Context, entry assetEntry) 
 
 	tmpDir, err := os.MkdirTemp(ateompath.StaticFilesDir, filepath.Base(releaseDir)+"-extract-")
 	if err != nil {
-		return "", wrapFileSystemErr("while creating extraction dir", err)
+		return "", fmt.Errorf("while creating extraction dir: %w", err)
 	}
 	defer func() { _ = os.RemoveAll(tmpDir) }() // no-op after rename
 
@@ -246,17 +242,17 @@ func (s *AteomHerder) fetchGVisorRelease(ctx context.Context, entry assetEntry) 
 	}
 	slog.InfoContext(ctx, "gVisor archive extraction complete", slog.String("url", entry.URL), slog.Duration("duration", time.Since(tExtract)))
 	if fi, err := os.Stat(filepath.Join(tmpDir, "runsc")); err != nil || !fi.Mode().IsRegular() {
-		return "", fmt.Errorf("%w: gvisor tarball %v contains no runsc binary (stat: %v)", ateerrors.ReasonInvalidSandboxAsset, entry.URL, err)
+		return "", fmt.Errorf("gvisor tarball %v contains no runsc binary (stat: %v)", entry.URL, err)
 	}
 	if err := os.Chmod(tmpDir, 0o755); err != nil { // MkdirTemp created it 0700
-		return "", wrapFileSystemErr("while setting extraction dir mode", err)
+		return "", fmt.Errorf("while setting extraction dir mode: %w", err)
 	}
 	if err := os.Rename(tmpDir, releaseDir); err != nil {
 		// A concurrent fetch of the same release may have won the rename.
 		if errors.Is(err, syscall.EEXIST) || errors.Is(err, syscall.ENOTEMPTY) {
 			return runscPath, nil
 		}
-		return "", wrapFileSystemErr("while renaming extraction dir to target", err)
+		return "", fmt.Errorf("while renaming extraction dir to target: %w", err)
 	}
 	return runscPath, nil
 }
@@ -282,12 +278,12 @@ func (s *AteomHerder) downloadVerified(ctx context.Context, entry assetEntry, tm
 
 	wantSum, err := hex.DecodeString(entry.SHA256)
 	if err != nil {
-		return "", fmt.Errorf("%w: while parsing sha256 hash: %w", ateerrors.ReasonInvalidSandboxAsset, err)
+		return "", fmt.Errorf("while parsing sha256 hash: %w", err)
 	}
 
 	tmpFile, err := os.CreateTemp(ateompath.StaticFilesDir, tmpPrefix)
 	if err != nil {
-		return "", wrapFileSystemErr("while creating temp file", err)
+		return "", fmt.Errorf("while creating temp file: %w", err)
 	}
 	tmpName := tmpFile.Name()
 	defer tmpFile.Close()
@@ -303,17 +299,17 @@ func (s *AteomHerder) downloadVerified(ctx context.Context, entry assetEntry, tm
 	hasher := sha256.New()
 	n, err := io.Copy(io.MultiWriter(tmpFile, hasher), io.LimitReader(rc, maxAssetBytes+1))
 	if err != nil {
-		return "", wrapFileSystemErr(fmt.Sprintf("while downloading %v", entry.URL), err)
+		return "", fmt.Errorf("while downloading %v: %w", entry.URL, err)
 	}
 	if n > maxAssetBytes {
-		return "", fmt.Errorf("%w: asset %v exceeds %d-byte cap", ateerrors.ReasonInvalidSandboxAsset, entry.URL, maxAssetBytes)
+		return "", fmt.Errorf("asset %v exceeds %d-byte cap", entry.URL, maxAssetBytes)
 	}
 	if got := hasher.Sum(nil); !bytes.Equal(got, wantSum) {
-		return "", fmt.Errorf("%w: sha256 mismatch; got=%x want=%s", ateerrors.ReasonInvalidSandboxAsset, got, entry.SHA256)
+		return "", fmt.Errorf("sha256 mismatch; got=%x want=%s", got, entry.SHA256)
 	}
 
 	if err := tmpFile.Close(); err != nil { // flush before the caller reads/renames
-		return "", wrapFileSystemErr("while closing temp file", err)
+		return "", fmt.Errorf("while closing temp file: %w", err)
 	}
 
 	ok = true
@@ -335,12 +331,12 @@ func extractTarArchive(ctx context.Context, tarPath, urlPath, destDir string) er
 	} else if strings.HasSuffix(urlPath, ".tar") {
 		isTar = true
 	} else {
-		return fmt.Errorf("%w: unsupported archive format for URL %s (must be .tar.gz, .tgz, .tar.bz2, .tbz2, .tar.zst, .tar.zstd, or .tar)", ateerrors.ReasonInvalidSandboxAsset, urlPath)
+		return fmt.Errorf("unsupported archive format for URL %s (must be .tar.gz, .tgz, .tar.bz2, .tbz2, .tar.zst, .tar.zstd, or .tar)", urlPath)
 	}
 
 	f, err := os.Open(tarPath)
 	if err != nil {
-		return wrapFileSystemErr("while opening downloaded tarball", err)
+		return fmt.Errorf("while opening downloaded tarball: %w", err)
 	}
 	defer f.Close()
 
@@ -350,7 +346,7 @@ func extractTarArchive(ctx context.Context, tarPath, urlPath, destDir string) er
 	if isGz {
 		gzr, err := gzip.NewReader(buf)
 		if err != nil {
-			return fmt.Errorf("%w: failed to create gzip reader for %s: %w", ateerrors.ReasonInvalidSandboxAsset, urlPath, err)
+			return fmt.Errorf("failed to create gzip reader for %s: %w", urlPath, err)
 		}
 		defer gzr.Close()
 		r = gzr
@@ -359,7 +355,7 @@ func extractTarArchive(ctx context.Context, tarPath, urlPath, destDir string) er
 	} else if isZst {
 		zr, err := zstd.NewReader(buf)
 		if err != nil {
-			return fmt.Errorf("%w: failed to create zstd reader for %s: %w", ateerrors.ReasonInvalidSandboxAsset, urlPath, err)
+			return fmt.Errorf("failed to create zstd reader for %s: %w", urlPath, err)
 		}
 		defer zr.Close()
 		r = zr
@@ -381,35 +377,35 @@ func extractTarArchive(ctx context.Context, tarPath, urlPath, destDir string) er
 			return nil
 		}
 		if err != nil {
-			return fmt.Errorf("%w: while reading gvisor tarball: %w", ateerrors.ReasonInvalidSandboxAsset, err)
+			return fmt.Errorf("while reading gvisor tarball: %w", err)
 		}
 		name := filepath.Clean(hdr.Name)
 		if name == "." {
 			continue
 		}
 		if filepath.IsAbs(name) || strings.Contains(name, "..") {
-			return fmt.Errorf("%w: gvisor tarball entry %q escapes the extraction dir", ateerrors.ReasonInvalidSandboxAsset, hdr.Name)
+			return fmt.Errorf("gvisor tarball entry %q escapes the extraction dir", hdr.Name)
 		}
 		dest := filepath.Join(destDir, name)
 		switch hdr.Typeflag {
 		case tar.TypeDir:
 			if err := os.MkdirAll(dest, fs.FileMode(hdr.Mode)&0o777|0o700); err != nil {
-				return wrapFileSystemErr("while creating tarball dir", err)
+				return fmt.Errorf("while creating tarball dir: %w", err)
 			}
 		case tar.TypeReg:
 			total += hdr.Size
 			filesCount++
 			if total > maxAssetBytes {
-				return fmt.Errorf("%w: gvisor tarball inflates past the %d-byte cap", ateerrors.ReasonInvalidSandboxAsset, maxAssetBytes)
+				return fmt.Errorf("gvisor tarball inflates past the %d-byte cap", maxAssetBytes)
 			}
 			if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
-				return wrapFileSystemErr("while creating tarball parent dir", err)
+				return fmt.Errorf("while creating tarball parent dir: %w", err)
 			}
 			if err := writeTarFile(dest, tr, fs.FileMode(hdr.Mode)&0o777); err != nil {
 				return err
 			}
 		default:
-			return fmt.Errorf("%w: gvisor tarball entry %q has unsupported type %d", ateerrors.ReasonInvalidSandboxAsset, hdr.Name, hdr.Typeflag)
+			return fmt.Errorf("gvisor tarball entry %q has unsupported type %d", hdr.Name, hdr.Typeflag)
 		}
 	}
 }
@@ -418,17 +414,17 @@ func extractTarArchive(ctx context.Context, tarPath, urlPath, destDir string) er
 func writeTarFile(dest string, r io.Reader, mode fs.FileMode) error {
 	out, err := os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
 	if err != nil {
-		return wrapFileSystemErr("while creating tarball file", err)
+		return fmt.Errorf("while creating tarball file: %w", err)
 	}
 	defer out.Close()
 	if _, err := io.Copy(out, r); err != nil {
-		return wrapFileSystemErr("while extracting tarball file", err)
+		return fmt.Errorf("while extracting tarball file: %w", err)
 	}
 	if err := out.Chmod(mode); err != nil {
-		return wrapFileSystemErr("while setting tarball file mode", err)
+		return fmt.Errorf("while setting tarball file mode: %w", err)
 	}
 	if err := out.Close(); err != nil {
-		return wrapFileSystemErr("while closing tarball file", err)
+		return fmt.Errorf("while closing tarball file: %w", err)
 	}
 	return nil
 }
@@ -459,14 +455,14 @@ func (s *AteomHerder) openAsset(ctx context.Context, url string) (io.ReadCloser,
 func writeSandboxRecord(actorUID string, rec *sandboxAssetsRecord) error {
 	data, err := json.Marshal(rec)
 	if err != nil {
-		return wrapFileSystemErr("while marshaling sandbox record", err)
+		return fmt.Errorf("while marshaling sandbox record: %w", err)
 	}
 	path := ateompath.ActorSandboxAssetsFile(actorUID)
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return wrapFileSystemErr("while creating actor dir", err)
+		return fmt.Errorf("while creating actor dir: %w", err)
 	}
 	if err := writeFileAtomic(path, data, 0o600); err != nil {
-		return wrapFileSystemErr("while writing sandbox record", err)
+		return fmt.Errorf("while writing sandbox record: %w", err)
 	}
 	return nil
 }
@@ -477,7 +473,7 @@ func readSandboxRecord(actorUID string) (*sandboxAssetsRecord, error) {
 	path := ateompath.ActorSandboxAssetsFile(actorUID)
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, wrapFileSystemErr("while reading sandbox record", err)
+		return nil, fmt.Errorf("while reading sandbox record: %w", err)
 	}
 	return unmarshalSandboxRecord(data)
 }
@@ -485,43 +481,13 @@ func readSandboxRecord(actorUID string) (*sandboxAssetsRecord, error) {
 func unmarshalSandboxRecord(data []byte) (*sandboxAssetsRecord, error) {
 	rec := &sandboxAssetsRecord{}
 	if err := json.Unmarshal(data, rec); err != nil {
-		return nil, fmt.Errorf("%w: while parsing sandbox record/manifest: %w", ateerrors.ReasonInvalidSandboxAsset, err)
+		return nil, fmt.Errorf("while parsing sandbox record/manifest: %w", err)
 	}
 	// Fail loudly rather than let an empty image reach the image pull: a record
 	// without one predates the pause image moving into the sandbox config, and
 	// its snapshot cannot be rebuilt with a known-matching sandbox.
 	if rec.PauseImage == "" {
-		return nil, fmt.Errorf("%w: sandbox record/manifest has no pauseImage", ateerrors.ReasonInvalidSandboxAsset)
+		return nil, errors.New("sandbox record/manifest has no pauseImage")
 	}
 	return rec, nil
-}
-
-func wrapFileSystemErr(msg string, err error) error {
-	if isTerminalFileSystemErr(err) {
-		return fmt.Errorf("%w: %s: %w", ateerrors.ReasonTerminalFileSystemError, msg, err)
-	}
-	return fmt.Errorf("%s: %w", msg, err)
-}
-
-func isTerminalFileSystemErr(err error) bool {
-	var terminalFileErrs = []error{
-		os.ErrNotExist,
-		os.ErrPermission,
-		syscall.EISDIR,
-		syscall.ENOTDIR,
-		syscall.ENAMETOOLONG,
-		syscall.ELOOP,
-		syscall.EROFS,
-		// A full disk or exhausted quota cannot heal on this node without
-		// operator action; retrying locally just wedges the actor. Marking it
-		// terminal crashes the actor so it can be rescheduled elsewhere.
-		syscall.ENOSPC,
-		syscall.EDQUOT,
-	}
-	for _, target := range terminalFileErrs {
-		if errors.Is(err, target) {
-			return true
-		}
-	}
-	return false
 }

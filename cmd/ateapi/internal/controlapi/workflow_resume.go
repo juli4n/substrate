@@ -711,7 +711,10 @@ func (w *ActorWorkflow) ensureAteletRestored(ctx context.Context, actorRef resou
 		tele.WireSnapshotScope = ateattr.SnapshotScopeValue(req.Scope)
 
 		_, err = client.Restore(ctx, req)
-		return tele, maybeCrashActor(ctx, w.store, actorRef, err, "while restoring workload", ateattr.OperationResume)
+		if err != nil {
+			return tele, crashOnAteletFailure(ctx, w.store, actorRef, err, ateattr.OperationResume)
+		}
+		return tele, nil
 	} else if !src.SnapshotURI.IsZero() {
 		slog.InfoContext(ctx, "Actor has durable snapshot; Restoring from snapshot")
 		// Mirrors loadActorForResume's source resolution: the durable URI is
@@ -754,7 +757,10 @@ func (w *ActorWorkflow) ensureAteletRestored(ctx context.Context, actorRef resou
 			MemoryBytes:       memBytes,
 		}
 		_, err = client.Restore(ctx, req)
-		return tele, maybeCrashActor(ctx, w.store, actorRef, err, "while restoring durable snapshot", ateattr.OperationResume)
+		if err != nil {
+			return tele, crashOnAteletFailure(ctx, w.store, actorRef, err, ateattr.OperationResume)
+		}
+		return tele, nil
 	} else {
 		slog.InfoContext(ctx, "Actor has no snapshot; Booting from ActorTemplate spec")
 		tele.SnapshotKind = ateattr.SnapshotKindBoot
@@ -782,7 +788,10 @@ func (w *ActorWorkflow) ensureAteletRestored(ctx context.Context, actorRef resou
 			MemoryBytes:           memBytes,
 		}
 		_, err = client.Run(ctx, req)
-		return tele, maybeCrashActor(ctx, w.store, actorRef, err, "while creating workload from spec", ateattr.OperationResume)
+		if err != nil {
+			return tele, crashOnAteletFailure(ctx, w.store, actorRef, err, ateattr.OperationResume)
+		}
+		return tele, nil
 	}
 }
 

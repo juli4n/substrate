@@ -17,7 +17,6 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"testing"
 	"time"
 
@@ -26,7 +25,6 @@ import (
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
 	"github.com/agent-substrate/substrate/internal/ateattr"
-	"github.com/agent-substrate/substrate/internal/ateerrors"
 	"github.com/agent-substrate/substrate/internal/proto/ateletpb"
 	"github.com/agent-substrate/substrate/internal/resources"
 )
@@ -105,7 +103,7 @@ func TestRestoreDurationShape(t *testing.T) {
 		scope:             ateattr.SnapshotScopeDataOnGolden,
 		sandboxClass:      "gvisor",
 	}
-	inst.recordRestore(context.Background(), op, nil,
+	inst.recordRestore(context.Background(), op,
 		phase{ateattr.SnapshotPhaseDownload, 2 * time.Second},
 		phase{ateattr.SnapshotPhaseTotal, 3 * time.Second})
 
@@ -153,7 +151,7 @@ func TestCheckpointDurationShape(t *testing.T) {
 		kind:              ateattr.SnapshotKindLocal,
 		scope:             ateattr.SnapshotScopeFull,
 		sandboxClass:      "microvm",
-	}, nil, phase{ateattr.SnapshotPhasePersist, time.Second})
+	}, phase{ateattr.SnapshotPhasePersist, time.Second})
 
 	m := collectHistogram(t, reader, checkpointDurationMetric)
 	if m.Unit != "s" {
@@ -168,17 +166,13 @@ func TestCheckpointDurationShape(t *testing.T) {
 	}
 }
 
-// TestRecordPhasesFailurePath is the failure-path contract: a restore that dies
-// in the download marks ate.failure.reason on that phase and on the total,
-// leaves the phases that already succeeded unlabeled so their latency stays
-// queryable, and does not report phases that never started as instantaneous.
-func TestRecordPhasesFailurePath(t *testing.T) {
+// TestRecordPhasesSkipsUnstartedPhases: a phase that never started is not
+// reported as a zero-duration observation.
+func TestRecordPhasesSkipsUnstartedPhases(t *testing.T) {
 	inst, reader := newTestInstruments(t)
 
-	downloadErr := fmt.Errorf("%w: while downloading snapshot", ateerrors.ReasonFailedGetExternalObject)
 	inst.recordRestore(context.Background(),
-		snapshotOp{scope: ateattr.SnapshotScopeFull, failedPhase: ateattr.SnapshotPhaseDownload},
-		downloadErr,
+		snapshotOp{scope: ateattr.SnapshotScopeFull},
 		phase{ateattr.SnapshotPhaseManifestFetch, 50 * time.Millisecond},
 		phase{ateattr.SnapshotPhaseDownload, 2 * time.Second},
 		phase{ateattr.SnapshotPhaseAteomRestore, 0},
@@ -188,51 +182,8 @@ func TestRecordPhasesFailurePath(t *testing.T) {
 	if _, ok := byPhase[ateattr.SnapshotPhaseAteomRestore]; ok {
 		t.Error("a phase that never started was recorded as a zero observation")
 	}
-
-	wantReason := string(ateerrors.ReasonFailedGetExternalObject)
-	tests := []struct {
-		phase      string
-		wantReason string // empty means ate.failure.reason must be absent
-	}{
-		{phase: ateattr.SnapshotPhaseDownload, wantReason: wantReason},
-		{phase: ateattr.SnapshotPhaseTotal, wantReason: wantReason},
-		{phase: ateattr.SnapshotPhaseManifestFetch, wantReason: ""},
-	}
-	for _, tt := range tests {
-		t.Run(tt.phase, func(t *testing.T) {
-			set, ok := byPhase[tt.phase]
-			if !ok {
-				t.Fatalf("phase %q missing", tt.phase)
-			}
-			got, present := set.Value(ateattr.FailureReasonKey)
-			if tt.wantReason == "" {
-				if present {
-					t.Errorf("ate.failure.reason = %q on a phase that succeeded, want absent", got.AsString())
-				}
-				return
-			}
-			if !present || got.AsString() != tt.wantReason {
-				t.Errorf("ate.failure.reason = %q (present=%v), want %q", got.AsString(), present, tt.wantReason)
-			}
-		})
-	}
-}
-
-// TestRecordPhasesUnclassifiedFailure covers the infrastructure failures that
-// carry no ateerrors.Reason (a dead object-storage endpoint, say): they must
-// collapse onto UNKNOWN rather than leaking an error message into the label.
-func TestRecordPhasesUnclassifiedFailure(t *testing.T) {
-	inst, reader := newTestInstruments(t)
-
-	inst.recordRestore(context.Background(),
-		snapshotOp{scope: ateattr.SnapshotScopeFull, failedPhase: ateattr.SnapshotPhaseManifestFetch},
-		fmt.Errorf("dial tcp 10.96.192.187:9000: connect: connection refused"),
-		phase{ateattr.SnapshotPhaseManifestFetch, 30 * time.Millisecond},
-		phase{ateattr.SnapshotPhaseTotal, 30 * time.Millisecond})
-
-	set := phaseValues(t, collectHistogram(t, reader, restoreDurationMetric))[ateattr.SnapshotPhaseManifestFetch]
-	if v := attrString(t, set, ateattr.FailureReasonKey); v != ateattr.ReasonUnknown {
-		t.Errorf("ate.failure.reason = %q, want %q", v, ateattr.ReasonUnknown)
+	if _, ok := byPhase[ateattr.SnapshotPhaseDownload]; !ok {
+		t.Error("a phase that ran was not recorded")
 	}
 }
 

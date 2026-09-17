@@ -206,7 +206,10 @@ func (w *ActorWorkflow) ensureAteletPaused(ctx context.Context, actorRef resourc
 	wireSnapshotScope = ateattr.SnapshotScopeValue(req.Scope)
 
 	_, err = client.Checkpoint(ctx, req)
-	return wireSnapshotScope, maybeCrashActor(ctx, w.store, actorRef, err, "while checkpointing workload", ateattr.OperationPause)
+	if err != nil {
+		return wireSnapshotScope, crashOnAteletFailure(ctx, w.store, actorRef, err, ateattr.OperationPause)
+	}
+	return wireSnapshotScope, nil
 }
 
 // ensurePausedFinalized releases the actor's worker (only when it is still

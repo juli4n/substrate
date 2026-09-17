@@ -24,7 +24,6 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 
-	"github.com/agent-substrate/substrate/internal/ateerrors"
 	"github.com/agent-substrate/substrate/internal/proto/ateletpb"
 	"github.com/agent-substrate/substrate/internal/resources"
 
@@ -158,25 +157,22 @@ const (
 )
 
 // Values for FailureDomainKey. A strict function of the reason, so it costs no
-// series. Emitted rather than derived downstream: a component ahead of ateapi
-// can report a reason this build rejects, which ExtractReason turns into
-// Unknown, and a consumer matching on the reason would file it as infrastructure.
+// series.
 const (
 	FailureDomainInfrastructure = "infrastructure"
 	FailureDomainWorkload       = "workload"
 	FailureDomainUnknown        = "unknown"
 )
 
-// workloadReasons are the failures the actor's owner fixes rather than the
-// platform operator: a misdeclared ActorTemplate as much as a process that will
-// not start. Membership, not a name prefix, decides the domain.
-//
-// ReasonInvalidSandboxAsset is deliberately absent: it reads a SandboxConfig,
-// which is cluster-scoped, so no actor can cause it or fix it.
-var workloadReasons = []ateerrors.Reason{
-	ateerrors.ReasonInvalidContainerConfig,
-	ateerrors.ReasonInvalidObjectURL,
-	ateerrors.ReasonWorkloadNotReady,
+// infrastructureReasons are the bounded, control-plane-detected crash causes:
+// every one is something the platform operator fixes, not the actor's owner,
+// so FailureDomain never reports FailureDomainWorkload today. Kept as its own
+// list (rather than inlined into FailureDomain) so a future reason can be
+// filed as workload without restructuring the classifier.
+var infrastructureReasons = []string{
+	ReasonCorruptedAssignment,
+	ReasonWorkerReassigned,
+	ReasonWorkerPodGone,
 }
 
 // FailureAttributes returns the reason and its domain together, so no producer
@@ -200,10 +196,7 @@ func FailureLogAttrs(reason string) []slog.Attr {
 // FailureDomainUnknown rather than infrastructure, so a taxonomy gap stays
 // visible instead of inflating one side.
 func FailureDomain(reason string) string {
-	if slices.Contains(workloadReasons, ateerrors.Reason(reason)) {
-		return FailureDomainWorkload
-	}
-	if ateerrors.IsValidReason(reason) && reason != ReasonUnknown {
+	if slices.Contains(infrastructureReasons, reason) {
 		return FailureDomainInfrastructure
 	}
 	return FailureDomainUnknown
@@ -227,13 +220,30 @@ const (
 	ConstraintSelector      = "selector"
 )
 
-// Control-plane failure reasons for ate.actor.crashes metric.
+// Control-plane failure reasons for the ate.actor.crashes metric. Every
+// crash is unconditional on whatever error triggered it (there is no
+// retryable/terminal split), so these are the only reason values a crash is
+// ever labeled with; an atelet RPC failure that reaches crashActor always
+// reports ReasonUnknown, since the cause does not cross the process boundary.
 const (
-	ReasonCorruptedAssignment = string(ateerrors.ReasonCorruptedAssignment)
-	ReasonWorkerReassigned    = string(ateerrors.ReasonWorkerReassigned)
-	ReasonWorkerPodGone       = string(ateerrors.ReasonWorkerPodGone)
-	ReasonUnknown             = string(ateerrors.ReasonUnknown)
+	ReasonCorruptedAssignment = "CORRUPTED_ASSIGNMENT"
+	ReasonWorkerReassigned    = "WORKER_REASSIGNED"
+	ReasonWorkerPodGone       = "WORKER_POD_GONE"
+	ReasonUnknown             = "UNKNOWN"
 )
+
+// AllReasons lists every value ate.failure.reason may take.
+var AllReasons = []string{
+	ReasonCorruptedAssignment,
+	ReasonWorkerReassigned,
+	ReasonWorkerPodGone,
+	ReasonUnknown,
+}
+
+// IsValidReason reports whether reason is one of AllReasons.
+func IsValidReason(reason string) bool {
+	return slices.Contains(AllReasons, reason)
+}
 
 // Values for RouterResumeKey.
 const (
@@ -361,17 +371,6 @@ const (
 	SnapshotPhasePersist = "persist"
 	SnapshotPhaseTotal   = "total"
 )
-
-// FailureReason classifies err onto the bounded ateerrors taxonomy, reading the
-// wrapped Reason or the AIP-193 ErrorInfo detail. An error carrying neither
-// reports ReasonUnknown rather than anything derived from its message, which is
-// what keeps the label bounded.
-func FailureReason(err error) string {
-	if r := ateerrors.ExtractReason(err); r != "" {
-		return r
-	}
-	return ReasonUnknown
-}
 
 // SandboxClassUnknown is the NormalizeSandboxClass fallback.
 const SandboxClassUnknown = "unknown"

@@ -16,13 +16,13 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path"
 	"sort"
 	"strings"
 
-	"github.com/agent-substrate/substrate/internal/ateerrors"
 	"github.com/agent-substrate/substrate/internal/ateompath"
 	"github.com/agent-substrate/substrate/internal/imagecache"
 	"github.com/agent-substrate/substrate/internal/ocispec"
@@ -38,6 +38,10 @@ const (
 	// whole default set. It is rejected in add (see v1alpha1.Capabilities).
 	capabilityAll = "ALL"
 )
+
+// errNoCommandSpecified reports that neither the image nor the ActorTemplate
+// declares a runnable process.
+var errNoCommandSpecified = errors.New("no command specified: image defines neither ENTRYPOINT nor CMD and the container sets neither command nor args")
 
 // defaultCapabilities is what an actor container gets when its template asks
 // for no adjustment. Names are unprefixed; resolveCapabilities adds the OCI
@@ -260,7 +264,7 @@ func resolveProcessArgs(imageCfg *v1.Config, command, args []string) ([]string, 
 	argv = append(argv, entrypoint...)
 	argv = append(argv, cmd...)
 	if len(argv) == 0 {
-		return nil, fmt.Errorf("%w: no command specified: image defines neither ENTRYPOINT nor CMD and the container sets neither command nor args", ateerrors.ReasonInvalidContainerConfig)
+		return nil, errNoCommandSpecified
 	}
 	return argv, nil
 }

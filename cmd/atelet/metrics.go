@@ -109,40 +109,32 @@ type phase struct {
 	d    time.Duration
 }
 
-func (i *Instruments) recordRestore(ctx context.Context, op snapshotOp, err error, phases ...phase) {
+func (i *Instruments) recordRestore(ctx context.Context, op snapshotOp, phases ...phase) {
 	if i == nil || i.restoreDuration == nil {
 		return
 	}
-	recordPhases(ctx, i.restoreDuration, op, err, phases)
+	recordPhases(ctx, i.restoreDuration, op, phases)
 }
 
-func (i *Instruments) recordCheckpoint(ctx context.Context, op snapshotOp, err error, phases ...phase) {
+func (i *Instruments) recordCheckpoint(ctx context.Context, op snapshotOp, phases ...phase) {
 	if i == nil || i.checkpointDuration == nil {
 		return
 	}
-	recordPhases(ctx, i.checkpointDuration, op, err, phases)
+	recordPhases(ctx, i.checkpointDuration, op, phases)
 }
 
 // recordPhases skips zero-valued phases: those never started, because the
 // operation died before reaching them, and reporting them as instantaneous
 // would drag every percentile down.
-//
-// ate.failure.reason marks only the phase that failed and the total. It carries
-// substrate's taxonomy rather than a gRPC code, which would read Unknown for
-// almost every failure here: the interceptor maps these wrapped domain errors
-// to a status only after the handler returns.
-func recordPhases(ctx context.Context, h metric.Float64Histogram, op snapshotOp, err error, phases []phase) {
+func recordPhases(ctx context.Context, h metric.Float64Histogram, op snapshotOp, phases []phase) {
 	base := op.attrs()
 	for _, p := range phases {
 		if p.d == 0 {
 			continue
 		}
-		attrs := make([]attribute.KeyValue, 0, len(base)+3)
+		attrs := make([]attribute.KeyValue, 0, len(base)+1)
 		attrs = append(attrs, base...)
 		attrs = append(attrs, ateattr.SnapshotPhaseKey.String(p.name))
-		if err != nil && (p.name == ateattr.SnapshotPhaseTotal || p.name == op.failedPhase) {
-			attrs = append(attrs, ateattr.FailureAttributes(ateattr.FailureReason(err))...)
-		}
 		h.Record(ctx, p.d.Seconds(), metric.WithAttributes(attrs...))
 	}
 }
