@@ -129,6 +129,9 @@ func TestDeleteWorkerWorkflow_ReleasesBoundActor(t *testing.T) {
 	if got.GetStatus().GetWorkerAssignment() != nil {
 		t.Errorf("actor worker assignment = %v, want it cleared", got.GetStatus().GetWorkerAssignment())
 	}
+	if crashInfo := got.GetStatus().GetCrashInfo(); crashInfo.GetMessage() == "" || !crashInfo.GetCrashedAt().IsValid() {
+		t.Errorf("CrashInfo = %v, want a message and a crashed_at timestamp", crashInfo)
+	}
 	// The local checkpoint lived on the node that went away, so it dies with
 	// the worker.
 	if got.GetStatus().GetInProgressLocalSnapshotName() != "" {

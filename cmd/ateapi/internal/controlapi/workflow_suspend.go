@@ -213,7 +213,7 @@ func (w *ActorWorkflow) ensureAteletSuspended(ctx context.Context, actorRef reso
 	assignment := actor.GetStatus().GetWorkerAssignment()
 	if assignment == nil {
 		// Missing active worker pod reference in SUSPENDING state indicates corrupted store state.
-		if err := crashActor(ctx, w.store, w.dialer, actorRef, ateattr.OperationSuspend, ateattr.ReasonCorruptedAssignment); err != nil {
+		if err := crashActor(ctx, w.store, w.dialer, actorRef, ateattr.OperationSuspend, ateattr.ReasonCorruptedAssignment, "actor was in SUSPENDING state but has no active worker assignment"); err != nil {
 			slog.ErrorContext(ctx, "Failed to crash actor", slog.String("err", err.Error()))
 		}
 		return "", fmt.Errorf("actor is CRASHED because it was in SUSPENDING state but has no active worker")
@@ -223,7 +223,7 @@ func (w *ActorWorkflow) ensureAteletSuspended(ctx context.Context, actorRef reso
 	if err != nil {
 		if errors.Is(err, ErrWorkerPodNotFound) {
 			slog.ErrorContext(ctx, "Worker pod gone before checkpoint, crashing actor", "namespace", assignment.GetWorkerNamespace(), "pod", assignment.GetWorkerPod(), "in_progress_snapshot_uri", actor.GetStatus().GetInProgressSnapshotUri())
-			if err := crashActor(ctx, w.store, w.dialer, actorRef, ateattr.OperationSuspend, ateattr.ReasonWorkerPodGone); err != nil {
+			if err := crashActor(ctx, w.store, w.dialer, actorRef, ateattr.OperationSuspend, ateattr.ReasonWorkerPodGone, fmt.Sprintf("worker pod %s/%s is gone before checkpoint", assignment.GetWorkerNamespace(), assignment.GetWorkerPod())); err != nil {
 				slog.ErrorContext(ctx, "Failed to crash actor", slog.String("err", err.Error()))
 			}
 			return "", fmt.Errorf("actor is CRASHED because its worker pod is gone and no snapshot was written")
@@ -279,7 +279,7 @@ func (w *ActorWorkflow) ensurePausedSnapshotUploaded(ctx context.Context, actorR
 	if len(local.GetNodeVmsWithLocalSnapshots()) == 0 {
 		// Without the node the snapshot can never be found (mirrors
 		// FinalizePaused, which crashes rather than record an unknown node).
-		if err := crashActor(ctx, w.store, w.dialer, actorRef, ateattr.OperationSuspend, ateattr.ReasonCorruptedAssignment); err != nil {
+		if err := crashActor(ctx, w.store, w.dialer, actorRef, ateattr.OperationSuspend, ateattr.ReasonCorruptedAssignment, "actor was suspending a paused snapshot with no node recorded"); err != nil {
 			slog.ErrorContext(ctx, "Failed to crash actor", slog.String("err", err.Error()))
 		}
 		return "", fmt.Errorf("actor is CRASHED because it was suspending a paused snapshot with no node recorded")

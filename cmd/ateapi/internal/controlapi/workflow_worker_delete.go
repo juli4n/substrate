@@ -26,6 +26,7 @@ import (
 	"github.com/agent-substrate/substrate/pkg/proto/ateapipb"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // DeleteWorker executes the workflow to deregister a Worker. The caller reaches
@@ -234,6 +235,12 @@ func (w *WorkerWorkflow) releaseBoundActor(ctx context.Context, worker *ateapipb
 		// with the actor when the actor is deleted (only possible outcome from CRASHED
 		// state).
 		toUpdate.Status.InProgressLocalSnapshotName = ""
+		if !wasAlreadyCrashed {
+			toUpdate.Status.CrashInfo = &ateapipb.ActorCrashInfo{
+				CrashedAt: timestamppb.Now(),
+				Message:   fmt.Sprintf("worker %s no longer exists", name),
+			}
+		}
 		return nil
 	})
 	switch {

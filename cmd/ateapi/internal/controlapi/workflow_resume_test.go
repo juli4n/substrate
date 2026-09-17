@@ -747,6 +747,9 @@ func TestResumeActor_CrashesOnMissingWorkerAssignment(t *testing.T) {
 	if got.GetStatus().GetState() != ateapipb.ActorState_ACTOR_STATE_CRASHED {
 		t.Errorf("stored state = %v, want %v", got.GetStatus().GetState(), ateapipb.ActorState_ACTOR_STATE_CRASHED)
 	}
+	if crashInfo := got.GetStatus().GetCrashInfo(); crashInfo.GetMessage() == "" || !crashInfo.GetCrashedAt().IsValid() {
+		t.Errorf("CrashInfo = %v, want a message and a crashed_at timestamp", crashInfo)
+	}
 }
 
 // TestValidateAssignedWorker_WorkerOwnership verifies that RESUMING recovery

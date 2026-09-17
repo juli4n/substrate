@@ -245,6 +245,76 @@ func Validate_Actor(
 	return errs
 }
 
+// Validate_ActorCrashInfo validates an instance of ActorCrashInfo according
+// to declarative validation rules in the API schema.
+func Validate_ActorCrashInfo(
+	ctx context.Context, op operation.Operation, fldPath *field.Path,
+	obj, oldObj *ateapipb.ActorCrashInfo) (errs field.ErrorList) {
+
+	{ // field ateapipb.ActorCrashInfo.CrashedAt
+		fn := func(
+			fldPath *field.Path,
+			obj, oldObj *timestamppb.Timestamp,
+			oldValueCorrelated bool) (errs field.ErrorList) {
+			// don't revalidate unchanged data
+			if oldValueCorrelated && op.Type == operation.Update {
+				if ateDeepEqual(obj, oldObj) {
+					return nil
+				}
+			}
+			// call field-attached validations
+			earlyReturn := false
+			if e := validate.RequiredPointer(ctx, op, fldPath, obj, oldObj).MarkShortCircuit(); len(e) != 0 {
+				errs = append(errs, e...)
+				earlyReturn = true
+			}
+			if earlyReturn {
+				return // do not proceed
+			}
+			return
+		}
+		oldVal := safe.Field(oldObj,
+			func(oldObj *ateapipb.ActorCrashInfo) *timestamppb.Timestamp {
+				return oldObj.CrashedAt
+			})
+		errs = append(errs, fn(fldPath.Child("crashed_at"), obj.CrashedAt, oldVal, oldObj != nil)...)
+	}
+
+	{ // field ateapipb.ActorCrashInfo.Message
+		fn := func(
+			fldPath *field.Path,
+			obj, oldObj *string,
+			oldValueCorrelated bool) (errs field.ErrorList) {
+			// don't revalidate unchanged data
+			if oldValueCorrelated && op.Type == operation.Update {
+				if obj == oldObj || (obj != nil && oldObj != nil && *obj == *oldObj) {
+					return nil
+				}
+			}
+			// call field-attached validations
+			earlyReturn := false
+			if e := validate.RequiredValue(ctx, op, fldPath, obj, oldObj).MarkShortCircuit(); len(e) != 0 {
+				errs = append(errs, e...)
+				earlyReturn = true
+			}
+			if earlyReturn {
+				return // do not proceed
+			}
+			if e := validate.MaxLength(ctx, op, fldPath, obj, oldObj, 2048); len(e) != 0 {
+				errs = append(errs, e...)
+			}
+			return
+		}
+		oldVal := safe.Field(oldObj,
+			func(oldObj *ateapipb.ActorCrashInfo) *string {
+				return &oldObj.Message
+			})
+		errs = append(errs, fn(fldPath.Child("message"), &obj.Message, oldVal, oldObj != nil)...)
+	}
+
+	return errs
+}
+
 // Validate_ActorMetadataDataSource validates an instance of ActorMetadataDataSource according
 // to declarative validation rules in the API schema.
 func Validate_ActorMetadataDataSource(
@@ -656,6 +726,36 @@ func Validate_ActorStatus(
 				return &oldObj.CurrentActorTemplateUid
 			})
 		errs = append(errs, fn(fldPath.Child("current_actor_template_uid"), &obj.CurrentActorTemplateUid, oldVal, oldObj != nil)...)
+	}
+
+	{ // field ateapipb.ActorStatus.CrashInfo
+		fn := func(
+			fldPath *field.Path,
+			obj, oldObj *ateapipb.ActorCrashInfo,
+			oldValueCorrelated bool) (errs field.ErrorList) {
+			// don't revalidate unchanged data
+			if oldValueCorrelated && op.Type == operation.Update {
+				if ateDeepEqual(obj, oldObj) {
+					return nil
+				}
+			}
+			// call field-attached validations
+			earlyReturn := false
+			if e := validate.OptionalPointer(ctx, op, fldPath, obj, oldObj).MarkShortCircuit(); len(e) != 0 {
+				earlyReturn = true
+			}
+			if earlyReturn {
+				return // do not proceed
+			}
+			// call the type's validation function
+			errs = append(errs, Validate_ActorCrashInfo(ctx, op, fldPath, obj, oldObj)...)
+			return
+		}
+		oldVal := safe.Field(oldObj,
+			func(oldObj *ateapipb.ActorStatus) *ateapipb.ActorCrashInfo {
+				return oldObj.CrashInfo
+			})
+		errs = append(errs, fn(fldPath.Child("crash_info"), obj.CrashInfo, oldVal, oldObj != nil)...)
 	}
 
 	return errs

@@ -21,16 +21,19 @@ import (
 	"maps"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/agent-substrate/substrate/cmd/ateapi/internal/store"
 	"github.com/agent-substrate/substrate/cmd/ateapi/internal/store/storetest"
 	"github.com/agent-substrate/substrate/internal/ateattr"
 	"github.com/agent-substrate/substrate/internal/resources"
 	"github.com/agent-substrate/substrate/pkg/proto/ateapipb"
+	"github.com/google/go-cmp/cmp"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/testing/protocmp"
 )
 
 // seedActor stores a running actor with all worker-binding fields populated, so
@@ -116,6 +119,13 @@ func assertCrashed(t *testing.T, ctx context.Context, st store.Interface, actorR
 	}
 	if got.GetStatus().GetWorkerAssignment() != nil {
 		t.Errorf("WorkerAssignment = %v, want cleared", got.GetStatus().GetWorkerAssignment())
+	}
+	crashInfo := got.GetStatus().GetCrashInfo()
+	if crashInfo.GetMessage() == "" {
+		t.Error("CrashInfo.Message is empty, want a diagnostic message")
+	}
+	if !crashInfo.GetCrashedAt().IsValid() {
+		t.Error("CrashInfo.CrashedAt is unset, want the crash timestamp")
 	}
 }
 
@@ -267,7 +277,7 @@ func TestCrashActor(t *testing.T) {
 				tt.setup(t, ctx, st)
 			}
 
-			err := crashActor(ctx, st, newDanglingDialer(), actorRef, ateattr.OperationUnknown, ateattr.ReasonUnknown)
+			err := crashActor(ctx, st, newDanglingDialer(), actorRef, ateattr.OperationUnknown, ateattr.ReasonUnknown, "test crash message")
 
 			tt.check(t, ctx, st, err)
 		})
@@ -299,6 +309,15 @@ func TestCrashOnAteletFailure(t *testing.T) {
 					t.Errorf("status code = %v, want %v", got, codes.DataLoss)
 				}
 				assertCrashed(t, ctx, st, actorRef)
+				got, gerr := st.GetActor(ctx, actorRef)
+				if gerr != nil {
+					t.Fatalf("GetActor: %v", gerr)
+				}
+				// The stored message is the status's Message(), not the
+				// "rpc error: code = ... desc =" wrapper Error() adds.
+				if want := status.Convert(statusErr).Message(); got.GetStatus().GetCrashInfo().GetMessage() != want {
+					t.Errorf("CrashInfo.Message = %q, want the status message %q", got.GetStatus().GetCrashInfo().GetMessage(), want)
+				}
 			},
 		},
 		{
@@ -313,6 +332,15 @@ func TestCrashOnAteletFailure(t *testing.T) {
 					t.Errorf("status code = %v, want %v", got, codes.DataLoss)
 				}
 				assertCrashed(t, ctx, st, actorRef)
+				got, gerr := st.GetActor(ctx, actorRef)
+				if gerr != nil {
+					t.Fatalf("GetActor: %v", gerr)
+				}
+				// A non-status error has no wrapper to strip: the message is
+				// its own Error() string either way.
+				if want := plainErr.Error(); got.GetStatus().GetCrashInfo().GetMessage() != want {
+					t.Errorf("CrashInfo.Message = %q, want the plain error's message %q", got.GetStatus().GetCrashInfo().GetMessage(), want)
+				}
 			},
 		},
 		{
@@ -396,7 +424,7 @@ func TestCrashActor_Metrics(t *testing.T) {
 	}
 	storetest.MustCreateActor(t, ctx, st, actor)
 
-	if err := crashActor(ctx, st, newDanglingDialer(), actorRef, ateattr.OperationResume, ateattr.ReasonCorruptedAssignment); err != nil {
+	if err := crashActor(ctx, st, newDanglingDialer(), actorRef, ateattr.OperationResume, ateattr.ReasonCorruptedAssignment, "test crash message"); err != nil {
 		t.Fatalf("crashActor: %v", err)
 	}
 
@@ -497,7 +525,7 @@ func TestCrashActorReleaseFailureLeavesWorkerReclaimable(t *testing.T) {
 	seedWorker(t, ctx, st, actorRef)
 
 	releaseErr := errors.New("state store unavailable")
-	err := crashActor(ctx, failingReleaseStore{Interface: st, err: releaseErr}, newDanglingDialer(), actorRef, ateattr.OperationUnknown, ateattr.ReasonUnknown)
+	err := crashActor(ctx, failingReleaseStore{Interface: st, err: releaseErr}, newDanglingDialer(), actorRef, ateattr.OperationUnknown, ateattr.ReasonUnknown, "test crash message")
 
 	if err == nil {
 		t.Fatal("crashActor() = nil, want error")
@@ -568,7 +596,7 @@ func TestCrashActor_TerminatesWorkloadBeforeClearingAssignment(t *testing.T) {
 	actorRef := resources.ActorRef{Atespace: "team-a", Name: "actor-1"}
 	seedWiredActor(t, ctx, persistence, actorRef)
 
-	if err := crashActor(ctx, w.store, w.dialer, actorRef, ateattr.OperationUnknown, ateattr.ReasonUnknown); err != nil {
+	if err := crashActor(ctx, w.store, w.dialer, actorRef, ateattr.OperationUnknown, ateattr.ReasonUnknown, "test crash message"); err != nil {
 		t.Fatalf("crashActor: %v", err)
 	}
 
@@ -596,7 +624,7 @@ func TestCrashActor_TerminateFailureBlocksCrash(t *testing.T) {
 	actorRef := resources.ActorRef{Atespace: "team-a", Name: "actor-1"}
 	seedWiredActor(t, ctx, persistence, actorRef)
 
-	err := crashActor(ctx, w.store, w.dialer, actorRef, ateattr.OperationUnknown, ateattr.ReasonUnknown)
+	err := crashActor(ctx, w.store, w.dialer, actorRef, ateattr.OperationUnknown, ateattr.ReasonUnknown, "test crash message")
 	if err == nil {
 		t.Fatal("crashActor() = nil, want error")
 	}
@@ -676,7 +704,8 @@ func TestCrashActor_RecordAndCounterAgree(t *testing.T) {
 		Status:        &ateapipb.ActorStatus{State: ateapipb.ActorState_ACTOR_STATE_RUNNING},
 	})
 
-	if err := crashActor(ctx, st, newDanglingDialer(), actorRef, ateattr.OperationResume, ateattr.ReasonWorkerPodGone); err != nil {
+	beforeCrash := time.Now()
+	if err := crashActor(ctx, st, newDanglingDialer(), actorRef, ateattr.OperationResume, ateattr.ReasonWorkerPodGone, "worker pod gone"); err != nil {
 		t.Fatalf("crashActor: %v", err)
 	}
 	if len(*records) != 1 {
@@ -687,6 +716,13 @@ func TestCrashActor_RecordAndCounterAgree(t *testing.T) {
 	stored, err := st.GetActor(ctx, actorRef)
 	if err != nil {
 		t.Fatalf("GetActor: %v", err)
+	}
+	crashInfo := stored.GetStatus().GetCrashInfo()
+	if crashInfo.GetMessage() != "worker pod gone" {
+		t.Errorf("CrashInfo.Message = %q, want %q", crashInfo.GetMessage(), "worker pod gone")
+	}
+	if crashedAt := crashInfo.GetCrashedAt().AsTime(); crashedAt.Before(beforeCrash) || crashedAt.After(time.Now()) {
+		t.Errorf("CrashInfo.CrashedAt = %v, want it between %v and now", crashedAt, beforeCrash)
 	}
 	want := map[string]string{
 		string(ateattr.AtespaceKey):           actorRef.Atespace,
@@ -706,11 +742,19 @@ func TestCrashActor_RecordAndCounterAgree(t *testing.T) {
 		t.Error("crash record carries no ate.actor.uid; it cannot survive a name reuse")
 	}
 
-	// Re-crashing an already-crashed actor must move neither signal.
-	if err := crashActor(ctx, st, newDanglingDialer(), actorRef, ateattr.OperationResume, ateattr.ReasonWorkerPodGone); err != nil {
+	// Re-crashing an already-crashed actor must move neither signal, nor
+	// overwrite the original CrashInfo with details of the retry.
+	if err := crashActor(ctx, st, newDanglingDialer(), actorRef, ateattr.OperationResume, ateattr.ReasonWorkerPodGone, "a different message from the retry"); err != nil {
 		t.Fatalf("second crashActor: %v", err)
 	}
 	if len(*records) != 1 {
 		t.Errorf("got %d crash records after re-crashing, want 1", len(*records))
+	}
+	restored, err := st.GetActor(ctx, actorRef)
+	if err != nil {
+		t.Fatalf("GetActor after re-crash: %v", err)
+	}
+	if diff := cmp.Diff(crashInfo, restored.GetStatus().GetCrashInfo(), protocmp.Transform()); diff != "" {
+		t.Errorf("CrashInfo changed by re-crashing an already-crashed actor (-want +got):\n%s", diff)
 	}
 }

@@ -588,6 +588,27 @@ message ActorStatus {
   //
   // +k8s:optional
   string current_actor_template_uid = 11;
+
+  // crash_info contains information about why the actor
+  // entered CRASHED state and when that happened.
+  // Only set if the actor is in CRASHED state.
+  //
+  // +k8s:optional
+  ActorCrashInfo crash_info = 12;
+}
+
+// ActorCrashInfo contains why and when an Actor crashed.
+message ActorCrashInfo {
+  // crashed_at is when the Actor transitioned to CRASHED.
+  //
+  // +k8s:required
+  google.protobuf.Timestamp crashed_at = 1;
+
+  // message is a human-readable description of the cause of the crash.
+  //
+  // +k8s:required
+  // +k8s:maxLength=2048
+  string message = 2;
 }
 
 // WorkerAssignment points at the Worker currently hosting an Actor.

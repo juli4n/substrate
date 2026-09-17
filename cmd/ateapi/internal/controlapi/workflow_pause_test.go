@@ -74,6 +74,9 @@ func TestEnsurePausedFinalized_WorkerGone(t *testing.T) {
 	if got.GetStatus().GetState() != ateapipb.ActorState_ACTOR_STATE_CRASHED {
 		t.Errorf("state = %v, want CRASHED (node name unknown, cannot resume safely)", got.GetStatus().GetState())
 	}
+	if crashInfo := got.GetStatus().GetCrashInfo(); crashInfo.GetMessage() == "" || !crashInfo.GetCrashedAt().IsValid() {
+		t.Errorf("CrashInfo = %v, want a message and a crashed_at timestamp", crashInfo)
+	}
 	for _, n := range got.GetStatus().GetLocalSnapshotInfo().GetNodeVmsWithLocalSnapshots() {
 		if n == "" {
 			t.Errorf("BUG: empty string in NodeVmsWithLocalSnapshots, the scheduler's node restriction would never match a real worker")

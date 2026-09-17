@@ -26,6 +26,7 @@ import (
 	"github.com/agent-substrate/substrate/pkg/proto/ateapipb"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // crashOnAteletFailure crashes the actor if atelet returned an error.
@@ -38,7 +39,11 @@ func crashOnAteletFailure(ctx context.Context, st crashActorStore, dialer *Atele
 	)
 	slog.LogAttrs(ctx, slog.LevelError, "Setting Actor to crashed due to error", attrs...)
 
-	if cerr := crashActor(ctx, st, dialer, actorRef, opName, ateattr.ReasonUnknown); cerr != nil {
+	// status.Convert(err).Message() strips the "rpc error: code = ... desc ="
+	// wrapper gRPC's own Error() adds, for both a real status error and a
+	// plain one (Convert treats a non-status error as codes.Unknown, whose
+	// Message() is exactly its original Error() string).
+	if cerr := crashActor(ctx, st, dialer, actorRef, opName, ateattr.ReasonUnknown, status.Convert(err).Message()); cerr != nil {
 		slog.ErrorContext(ctx, "Failed to crash actor", slog.Any("err", cerr))
 		return cerr
 	}
@@ -46,8 +51,9 @@ func crashOnAteletFailure(ctx context.Context, st crashActorStore, dialer *Atele
 }
 
 // crashActor terminates the actor's workload on its worker (if any), frees
-// the worker claim, and moves the actor to CRASHED state.
-func crashActor(ctx context.Context, st crashActorStore, dialer *AteletDialer, actorRef resources.ActorRef, opName, reason string) error {
+// the worker claim, and moves the actor to CRASHED state. message is recorded
+// once, in Status.CrashInfo, the first time the actor reaches CRASHED.
+func crashActor(ctx context.Context, st crashActorStore, dialer *AteletDialer, actorRef resources.ActorRef, opName, reason, message string) error {
 	actor, err := st.GetActor(ctx, actorRef)
 	if err != nil {
 		return fmt.Errorf("while loading actor to crash: %w", err)
@@ -97,6 +103,16 @@ func crashActor(ctx context.Context, st crashActorStore, dialer *AteletDialer, a
 		// debugging; failed workflow steps must never promote either of them to an
 		// ActorSnapshot or to LocalSnapshotInfo.
 		toUpdate.Status.WorkerAssignment = nil
+
+		// Recorded once: a retry that re-enters crashActor on an
+		// already-CRASHED actor (e.g. after a prior release failure) must not
+		// overwrite the original diagnostic with details of the retry itself.
+		if !wasAlreadyCrashed {
+			toUpdate.Status.CrashInfo = &ateapipb.ActorCrashInfo{
+				CrashedAt: timestamppb.Now(),
+				Message:   message,
+			}
+		}
 		return nil
 	})
 	if err != nil {

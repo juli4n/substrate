@@ -29,6 +29,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // PauseActor executes the workflow to pause a running actor. Idempotent:
@@ -160,7 +161,7 @@ func (w *ActorWorkflow) ensureAteletPaused(ctx context.Context, actorRef resourc
 	assignment := actor.GetStatus().GetWorkerAssignment()
 	if assignment == nil {
 		// Missing active worker pod reference in PAUSING state indicates corrupted store state.
-		if err := crashActor(ctx, w.store, w.dialer, actorRef, ateattr.OperationPause, ateattr.ReasonCorruptedAssignment); err != nil {
+		if err := crashActor(ctx, w.store, w.dialer, actorRef, ateattr.OperationPause, ateattr.ReasonCorruptedAssignment, "actor was in PAUSING state but has no active worker assignment"); err != nil {
 			slog.ErrorContext(ctx, "Failed to crash actor", slog.String("err", err.Error()))
 		}
 		return "", status.Errorf(codes.FailedPrecondition, "CallAteletPause prerequisite not met for Actor: %s. No worker assignment", actorRef)
@@ -170,7 +171,7 @@ func (w *ActorWorkflow) ensureAteletPaused(ctx context.Context, actorRef resourc
 	if err != nil {
 		if errors.Is(err, ErrWorkerPodNotFound) {
 			slog.ErrorContext(ctx, "Worker pod gone before checkpoint, crashing actor", "namespace", assignment.GetWorkerNamespace(), "pod", assignment.GetWorkerPod(), "in_progress_local_snapshot_name", actor.GetStatus().GetInProgressLocalSnapshotName())
-			if err := crashActor(ctx, w.store, w.dialer, actorRef, ateattr.OperationPause, ateattr.ReasonWorkerPodGone); err != nil {
+			if err := crashActor(ctx, w.store, w.dialer, actorRef, ateattr.OperationPause, ateattr.ReasonWorkerPodGone, fmt.Sprintf("worker pod %s/%s is gone before checkpoint", assignment.GetWorkerNamespace(), assignment.GetWorkerPod())); err != nil {
 				slog.ErrorContext(ctx, "Failed to crash actor", slog.String("err", err.Error()))
 			}
 			return "", fmt.Errorf("actor is CRASHED because its worker pod is gone and no snapshot was written")
@@ -290,6 +291,12 @@ func (w *ActorWorkflow) ensurePausedFinalized(ctx context.Context, actorRef reso
 				toUpdate.Status.InProgressLocalSnapshotName = ""
 			}
 			toUpdate.Status.WorkerAssignment = nil
+			if newState == ateapipb.ActorState_ACTOR_STATE_CRASHED && !wasAlreadyCrashed {
+				toUpdate.Status.CrashInfo = &ateapipb.ActorCrashInfo{
+					CrashedAt: timestamppb.Now(),
+					Message:   "worker node name not found while finalizing pause; the local snapshot's location would be unrecoverable",
+				}
+			}
 			return nil
 		})
 		if err == nil && storedActor.GetStatus().GetState() == ateapipb.ActorState_ACTOR_STATE_CRASHED && !wasAlreadyCrashed {
