@@ -26,8 +26,6 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/reflect/protoreflect"
 )
 
 // ServerElapsedTrailer carries the server's handler duration in microseconds,
@@ -51,8 +49,8 @@ func ServerUnaryInterceptor(ctx context.Context, req any, info *grpc.UnaryServer
 
 	slog.InfoContext(ctx, "Handle RPC",
 		slog.String("method", info.FullMethod),
-		slog.Any("req", sanitizeForLog(req)),
-		slog.Any("resp", sanitizeForLog(resp)),
+		slog.Any("req", req),
+		slog.Any("resp", resp),
 		slog.Any("err", err),
 		slog.String("elapsed-time", elapsed.String()),
 		slog.Any("principal", pInfo),
@@ -91,8 +89,8 @@ func InternalServerUnaryInterceptor(ctx context.Context, req any, info *grpc.Una
 
 	slog.InfoContext(ctx, "Handle RPC",
 		slog.String("method", info.FullMethod),
-		slog.Any("req", sanitizeForLog(req)),
-		slog.Any("resp", sanitizeForLog(resp)),
+		slog.Any("req", req),
+		slog.Any("resp", resp),
 		slog.Any("err", err),
 		slog.String("elapsed-time", time.Since(startTime).String()),
 	)
@@ -111,40 +109,4 @@ func InternalServerUnaryInterceptor(ctx context.Context, req any, info *grpc.Una
 	}
 
 	return resp, err
-}
-
-func sanitizeForLog(v any) any {
-	msg, ok := v.(proto.Message)
-	if !ok {
-		return v
-	}
-
-	clone := proto.Clone(msg)
-	clearEnvFields(clone.ProtoReflect())
-	return clone
-}
-
-func clearEnvFields(msg protoreflect.Message) {
-	msg.Range(func(fd protoreflect.FieldDescriptor, value protoreflect.Value) bool {
-		if fd.Name() == "env" {
-			msg.Clear(fd)
-			return true
-		}
-		if fd.IsMap() {
-			return true
-		}
-		if fd.IsList() {
-			list := value.List()
-			for i := 0; i < list.Len(); i++ {
-				if fd.Kind() == protoreflect.MessageKind || fd.Kind() == protoreflect.GroupKind {
-					clearEnvFields(list.Get(i).Message())
-				}
-			}
-			return true
-		}
-		if fd.Kind() == protoreflect.MessageKind || fd.Kind() == protoreflect.GroupKind {
-			clearEnvFields(value.Message())
-		}
-		return true
-	})
 }

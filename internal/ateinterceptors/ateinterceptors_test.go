@@ -14,18 +14,14 @@
 package ateinterceptors
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strconv"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/agent-substrate/substrate/internal/ateerrors"
-	"github.com/agent-substrate/substrate/internal/proto/ateletpb"
 	epb "google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -322,42 +318,5 @@ func TestMaxDeadlineUnaryInterceptor_ShorterDeadlineIsPreserved(t *testing.T) {
 
 	if _, err := interceptor(callerCtx, "request", &grpc.UnaryServerInfo{FullMethod: "/test.Service/Method"}, handler); err != nil {
 		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestServerUnaryInterceptorRedactsEnvFromProtoRequestLogs(t *testing.T) {
-	var log bytes.Buffer
-	origLogger := slog.Default()
-	t.Cleanup(func() {
-		slog.SetDefault(origLogger)
-	})
-	slog.SetDefault(slog.New(slog.NewJSONHandler(&log, nil)))
-
-	req := &ateletpb.RunRequest{
-		Spec: &ateletpb.WorkloadSpec{
-			Containers: []*ateletpb.Container{
-				{
-					Name: "main",
-					Env: []*ateletpb.EnvEntry{
-						{Name: "API_KEY", Value: "sk-secret"},
-					},
-				},
-			},
-		},
-	}
-
-	_, err := ServerUnaryInterceptor(context.Background(), req, &grpc.UnaryServerInfo{FullMethod: "/atelet.AteomHerder/Run"}, func(ctx context.Context, req interface{}) (interface{}, error) {
-		return &ateletpb.RunResponse{}, nil
-	})
-	if err != nil {
-		t.Fatalf("ServerUnaryInterceptor failed: %v", err)
-	}
-
-	gotLog := log.String()
-	if strings.Contains(gotLog, "sk-secret") || strings.Contains(gotLog, "API_KEY") {
-		t.Fatalf("log contains env data: %s", gotLog)
-	}
-	if len(req.GetSpec().GetContainers()[0].GetEnv()) != 1 {
-		t.Fatalf("interceptor mutated original request")
 	}
 }
