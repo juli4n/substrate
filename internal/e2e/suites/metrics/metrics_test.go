@@ -28,7 +28,6 @@ import (
 	"time"
 
 	"github.com/agent-substrate/substrate/internal/ateattr"
-	"github.com/agent-substrate/substrate/internal/ateerrors"
 	"github.com/agent-substrate/substrate/internal/e2e"
 	"github.com/agent-substrate/substrate/internal/resources"
 	"github.com/agent-substrate/substrate/pkg/proto/ateapipb"
@@ -240,8 +239,8 @@ func TestPlatformMetricsEmitted(t *testing.T) {
 
 					if reasonVal == "" {
 						crashErrs = append(crashErrs, "ate_failure_reason label is missing or empty")
-					} else if !ateerrors.IsValidReason(reasonVal) {
-						crashErrs = append(crashErrs, fmt.Sprintf("ate_failure_reason %q is invalid (must be a registered ateerrors reason enum like CORRUPTED_ASSIGNMENT, WORKER_POD_GONE, WORKER_REASSIGNED, UNKNOWN)", reasonVal))
+					} else if !ateattr.IsValidReason(reasonVal) {
+						crashErrs = append(crashErrs, fmt.Sprintf("ate_failure_reason %q is invalid (must be one of %v)", reasonVal, ateattr.AllReasons))
 					}
 
 					// The pair travels together, and the domain must agree with the

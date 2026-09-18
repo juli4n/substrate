@@ -24,7 +24,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/agent-substrate/substrate/internal/ateerrors"
 	"github.com/agent-substrate/substrate/internal/proto/ateletpb"
 	epb "google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc"
@@ -113,10 +112,21 @@ func errorInfoOf(t *testing.T, err error) *epb.ErrorInfo {
 	return nil
 }
 
+// newStructuredStatusErr builds a gRPC status error carrying an ErrorInfo
+// detail, the way a handler elsewhere in the codebase would.
+func newStructuredStatusErr(t *testing.T, code codes.Code, reason, msg string) error {
+	t.Helper()
+	st, err := status.New(code, msg).WithDetails(&epb.ErrorInfo{Reason: reason})
+	if err != nil {
+		t.Fatalf("while building the structured status: %v", err)
+	}
+	return st.Err()
+}
+
 // TestInternalServerUnaryInterceptorPreservesDetails verifies the interceptor
-// returns structured errors (from NewGRPCError) intact — preserving the code and
-// the ErrorInfo carrying the Reason — while collapsing plain errors to Internal
-// with no ErrorInfo detail.
+// returns structured errors intact — preserving the code and the ErrorInfo
+// carrying the Reason — while collapsing plain errors to Internal with no
+// ErrorInfo detail.
 func TestInternalServerUnaryInterceptorPreservesDetails(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -127,9 +137,9 @@ func TestInternalServerUnaryInterceptorPreservesDetails(t *testing.T) {
 	}{
 		{
 			name:          "structured error keeps code and reason",
-			handlerErr:    ateerrors.NewGRPCError(context.Background(), codes.DataLoss, ateerrors.ReasonFaileSaveSnapshot, ateerrors.ActorCrashedMetadata(), errors.New("boom")),
+			handlerErr:    newStructuredStatusErr(t, codes.DataLoss, "FAILED_SAVE_SNAPSHOT", "boom"),
 			wantCode:      codes.DataLoss,
-			wantReason:    string(ateerrors.ReasonFaileSaveSnapshot),
+			wantReason:    "FAILED_SAVE_SNAPSHOT",
 			wantErrorInfo: true,
 		},
 		{
@@ -178,31 +188,38 @@ func TestInternalServerUnaryInterceptorPreservesDetails(t *testing.T) {
 // returns the handler's status intact: ErrorInfo details (reason and metadata)
 // must survive the public wire, even when the status is wrapped.
 func TestServerUnaryInterceptorPreservesDetails(t *testing.T) {
-	metadata := map[string]string{"want": "0.2.0", "have": "0.1.0"}
-	structuredErr := ateerrors.NewGRPCError(context.Background(), codes.FailedPrecondition, ateerrors.ReasonInvalidCheckpointResult, metadata, errors.New("refused"))
+	wantMetadata := map[string]string{"want": "0.2.0", "have": "0.1.0"}
+	structuredSt, err := status.New(codes.FailedPrecondition, "refused").WithDetails(&epb.ErrorInfo{
+		Reason:   "INVALID_CHECKPOINT_RESULT",
+		Metadata: wantMetadata,
+	})
+	if err != nil {
+		t.Fatalf("while building the structured status: %v", err)
+	}
+	structuredErr := structuredSt.Err()
 
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return nil, fmt.Errorf("outer error: %w", structuredErr)
 	}
 
-	_, err := ServerUnaryInterceptor(context.Background(), "request", &grpc.UnaryServerInfo{FullMethod: "/test.Service/Method"}, handler)
-	if err == nil {
+	_, intErr := ServerUnaryInterceptor(context.Background(), "request", &grpc.UnaryServerInfo{FullMethod: "/test.Service/Method"}, handler)
+	if intErr == nil {
 		t.Fatal("expected error, got nil")
 	}
 
-	st, _ := status.FromError(err)
+	st, _ := status.FromError(intErr)
 	if st.Code() != codes.FailedPrecondition {
 		t.Errorf("code = %v, want %v", st.Code(), codes.FailedPrecondition)
 	}
 
-	info := errorInfoOf(t, err)
+	info := errorInfoOf(t, intErr)
 	if info == nil {
 		t.Fatal("status is missing the ErrorInfo detail")
 	}
-	if got, want := info.GetReason(), string(ateerrors.ReasonInvalidCheckpointResult); got != want {
+	if got, want := info.GetReason(), "INVALID_CHECKPOINT_RESULT"; got != want {
 		t.Errorf("ErrorInfo.Reason = %q, want %q", got, want)
 	}
-	for k, want := range metadata {
+	for k, want := range wantMetadata {
 		if got := info.GetMetadata()[k]; got != want {
 			t.Errorf("ErrorInfo.Metadata[%q] = %q, want %q", k, got, want)
 		}

@@ -23,7 +23,6 @@ package readyz
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -32,10 +31,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/agent-substrate/substrate/internal/ateerrors"
 	"github.com/agent-substrate/substrate/internal/proto/ateompb"
 	"golang.org/x/sync/errgroup"
-	"google.golang.org/grpc/codes"
 )
 
 // Tuning knobs. Sized for actor cold-start where the HTTP server may take
@@ -68,11 +65,6 @@ var HTTPClient = func() *http.Client {
 // WaitAll blocks until every container with a readyz probe set reports 200,
 // or returns the first error. Containers without a probe are skipped (their
 // absence means "no readiness gate").
-//
-// Every caller is an ateom RPC handler, so a %w-wrapped Reason dies here:
-// errors.As cannot cross a process, and the interceptor would flatten it to a
-// bare codes.Internal, leaving atelet reading UNKNOWN. The ErrorInfo detail is
-// what carries it. Internal and no crash directive both match today's behavior.
 func WaitAll(ctx context.Context, containers []*ateompb.Container, actorIP string) error {
 	g, gctx := errgroup.WithContext(ctx)
 	for _, ac := range containers {
@@ -84,11 +76,7 @@ func WaitAll(ctx context.Context, containers []*ateompb.Container, actorIP strin
 			return Wait(gctx, ac.GetName(), ac.GetReadyz(), actorIP)
 		})
 	}
-	err := g.Wait()
-	if err != nil && errors.Is(err, ateerrors.ReasonWorkloadNotReady) {
-		return ateerrors.NewGRPCError(ctx, codes.Internal, ateerrors.ReasonWorkloadNotReady, nil, err)
-	}
-	return err
+	return g.Wait()
 }
 
 // Wait polls the configured HTTP endpoint until it returns 200, the context
@@ -113,9 +101,8 @@ func Wait(ctx context.Context, containerName string, probe *ateompb.Readyz, acto
 				containerName, time.Since(start), attempts, lastErr, err)
 		}
 		if time.Now().After(deadline) {
-			// Tagged only here: the cancellation above is ateom draining, not the actor failing.
-			return fmt.Errorf("%w: readyz for %q never returned 200 within %s (%d attempts, last error: %v)",
-				ateerrors.ReasonWorkloadNotReady, containerName, timeout, attempts, lastErr)
+			return fmt.Errorf("readyz for %q never returned 200 within %s (%d attempts, last error: %v)",
+				containerName, timeout, attempts, lastErr)
 		}
 
 		attempts++

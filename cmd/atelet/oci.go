@@ -16,13 +16,13 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path"
 	"sort"
 	"strings"
 
-	"github.com/agent-substrate/substrate/internal/ateerrors"
 	"github.com/agent-substrate/substrate/internal/ateompath"
 	"github.com/agent-substrate/substrate/internal/imagecache"
 	"github.com/agent-substrate/substrate/internal/ocispec"
@@ -260,7 +260,7 @@ func resolveProcessArgs(imageCfg *v1.Config, command, args []string) ([]string, 
 	argv = append(argv, entrypoint...)
 	argv = append(argv, cmd...)
 	if len(argv) == 0 {
-		return nil, fmt.Errorf("%w: no command specified: image defines neither ENTRYPOINT nor CMD and the container sets neither command nor args", ateerrors.ReasonInvalidContainerConfig)
+		return nil, errors.New("no command specified: image defines neither ENTRYPOINT nor CMD and the container sets neither command nor args")
 	}
 	return argv, nil
 }

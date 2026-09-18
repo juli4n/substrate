@@ -772,7 +772,11 @@ func TestValidateAssignedWorker_WorkerOwnership(t *testing.T) {
 	tests := []struct {
 		name         string
 		sandboxClass string
-		assignment   *ateapipb.ActorAssignment
+		workerState  ateapipb.WorkerState // zero defaults to ACTIVE
+		// workerNotFound skips creating the worker at all, so GetWorker returns
+		// store.ErrNotFound; wantAssignment/wantWorkerWrite are unused then.
+		workerNotFound bool
+		assignment     *ateapipb.ActorAssignment
 		// wantCode is codes.OK when validateAssignedWorker must return nil.
 		wantCode       codes.Code
 		wantActorState ateapipb.ActorState
@@ -823,6 +827,21 @@ func TestValidateAssignedWorker_WorkerOwnership(t *testing.T) {
 			wantAssignment:  nil,
 			wantWorkerWrite: true,
 		},
+		{
+			name:           "crashes actor and leaves worker untouched when assigned worker is draining",
+			sandboxClass:   "gvisor",
+			workerState:    ateapipb.WorkerState_WORKER_STATE_DRAINING,
+			assignment:     ownAssignment,
+			wantCode:       codes.Aborted,
+			wantActorState: ateapipb.ActorState_ACTOR_STATE_CRASHED,
+			wantAssignment: ownAssignment,
+		},
+		{
+			name:           "crashes actor when assigned worker no longer exists",
+			workerNotFound: true,
+			wantCode:       codes.Aborted,
+			wantActorState: ateapipb.ActorState_ACTOR_STATE_CRASHED,
+		},
 	}
 
 	for _, tt := range tests {
@@ -830,23 +849,31 @@ func TestValidateAssignedWorker_WorkerOwnership(t *testing.T) {
 			ctx := context.Background()
 			persistence := newTestPersistence(t)
 
-			if _, err := persistence.CreateWorker(ctx, &ateapipb.Worker{
-				Metadata:        &ateapipb.ResourceMetadata{Name: testWorkerUID("pod-1")},
-				WorkerNamespace: "worker-ns",
-				WorkerPool:      "pool",
-				WorkerPod:       "pod-1",
-				WorkerPodUid:    testWorkerUID("pod-1"),
-				SandboxClass:    tt.sandboxClass,
-				Status:          &ateapipb.WorkerStatus{State: ateapipb.WorkerState_WORKER_STATE_ACTIVE, Capacity: &ateapipb.WorkerResources{Actors: 1}},
-			}); err != nil {
-				t.Fatalf("CreateWorker: %v", err)
-			}
-			seedAssignment(t, persistence, testWorkerUID("pod-1"), tt.assignment)
-			// Fetch the stored version so the no-write assertion below can
-			// detect any optimistic update.
-			seeded, err := persistence.GetWorker(ctx, testWorkerUID("pod-1"))
-			if err != nil {
-				t.Fatalf("GetWorker: %v", err)
+			var seeded *ateapipb.Worker
+			if !tt.workerNotFound {
+				workerState := tt.workerState
+				if workerState == ateapipb.WorkerState_WORKER_STATE_UNSPECIFIED {
+					workerState = ateapipb.WorkerState_WORKER_STATE_ACTIVE
+				}
+				if _, err := persistence.CreateWorker(ctx, &ateapipb.Worker{
+					Metadata:        &ateapipb.ResourceMetadata{Name: testWorkerUID("pod-1")},
+					WorkerNamespace: "worker-ns",
+					WorkerPool:      "pool",
+					WorkerPod:       "pod-1",
+					WorkerPodUid:    testWorkerUID("pod-1"),
+					SandboxClass:    tt.sandboxClass,
+					Status:          &ateapipb.WorkerStatus{State: workerState, Capacity: &ateapipb.WorkerResources{Actors: 1}},
+				}); err != nil {
+					t.Fatalf("CreateWorker: %v", err)
+				}
+				seedAssignment(t, persistence, testWorkerUID("pod-1"), tt.assignment)
+				// Fetch the stored version so the no-write assertion below can
+				// detect any optimistic update.
+				var err error
+				seeded, err = persistence.GetWorker(ctx, testWorkerUID("pod-1"))
+				if err != nil {
+					t.Fatalf("GetWorker: %v", err)
+				}
 			}
 
 			seedWorkflowActor(t, ctx, persistence, resources.ActorRef{Atespace: "team-a", Name: "shared"}, "ns", "tmpl1", ateapipb.ActorState_ACTOR_STATE_RESUMING)
@@ -866,7 +893,7 @@ func TestValidateAssignedWorker_WorkerOwnership(t *testing.T) {
 				},
 			}
 			tmpl := &ateapipb.ActorTemplate{SandboxConfig: &ateapipb.SandboxConfig{SandboxClass: ateapipb.SandboxClass_SANDBOX_CLASS_GVISOR}}
-			_, err = w.validateAssignedWorker(ctx, resources.ActorRef{Atespace: "team-a", Name: "shared"}, resumingActor, tmpl)
+			_, err := w.validateAssignedWorker(ctx, resources.ActorRef{Atespace: "team-a", Name: "shared"}, resumingActor, tmpl)
 			if got := status.Code(err); got != tt.wantCode {
 				t.Fatalf("status.Code(err) = %v, want %v (err: %v)", got, tt.wantCode, err)
 			}
@@ -877,6 +904,10 @@ func TestValidateAssignedWorker_WorkerOwnership(t *testing.T) {
 			}
 			if actor.GetStatus().GetState() != tt.wantActorState {
 				t.Errorf("stored actor state = %v, want %v", actor.GetStatus().GetState(), tt.wantActorState)
+			}
+
+			if tt.workerNotFound {
+				return
 			}
 
 			stored, err := persistence.GetWorker(ctx, testWorkerUID("pod-1"))

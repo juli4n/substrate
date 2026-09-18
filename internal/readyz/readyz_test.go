@@ -16,8 +16,6 @@ package readyz
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -27,11 +25,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/agent-substrate/substrate/internal/ateattr"
-	"github.com/agent-substrate/substrate/internal/ateerrors"
 	"github.com/agent-substrate/substrate/internal/proto/ateompb"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 func TestURL(t *testing.T) {
@@ -163,11 +157,6 @@ func TestWait_ContextCancellation(t *testing.T) {
 	if err == nil {
 		t.Fatalf("Wait returned nil, expected cancellation error")
 	}
-	// A cancelled probe is ateom draining, not the actor failing. Tagging it
-	// would attribute a node drain to the workload.
-	if errors.Is(err, ateerrors.ReasonWorkloadNotReady) {
-		t.Errorf("Wait tagged a cancellation with %v: %v", ateerrors.ReasonWorkloadNotReady, err)
-	}
 }
 
 func TestOverallTimeout(t *testing.T) {
@@ -219,9 +208,6 @@ func TestWait_GivesUpAtProbeTimeout(t *testing.T) {
 	if err == nil {
 		t.Fatalf("Wait returned nil, expected a timeout error")
 	}
-	if !errors.Is(err, ateerrors.ReasonWorkloadNotReady) {
-		t.Errorf("Wait error = %v, want it to carry %v", err, ateerrors.ReasonWorkloadNotReady)
-	}
 	elapsed := time.Since(start)
 	if elapsed < time.Second {
 		t.Errorf("Wait gave up after %v, before the probe's 1s timeout", elapsed)
@@ -272,11 +258,7 @@ func pickFreePort(t *testing.T) int {
 	return port
 }
 
-// WaitAll is an ateom RPC boundary, so the reason has to reach atelet as an
-// ErrorInfo detail. A %w-wrapped Reason does not: errors.As cannot cross a
-// process, and the interceptor flattens a statusless error to a bare
-// codes.Internal, which reads back as UNKNOWN.
-func TestWaitAll_ReasonSurvivesTheRPCBoundary(t *testing.T) {
+func TestWaitAll_PropagatesTimeout(t *testing.T) {
 	port := pickFreePort(t)
 	containers := []*ateompb.Container{{
 		Name:   "main",
@@ -285,24 +267,7 @@ func TestWaitAll_ReasonSurvivesTheRPCBoundary(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	err := WaitAll(ctx, containers, "127.0.0.1")
-	if err == nil {
+	if err := WaitAll(ctx, containers, "127.0.0.1"); err == nil {
 		t.Fatal("WaitAll returned nil, expected a timeout error")
 	}
-
-	// What the interceptor does to a handler error, then what atelet reads.
-	overWire := fmt.Errorf("while calling ateom.RunWorkload: %w", asHandlerReturns(err))
-	if got := ateattr.FailureReason(overWire); got != string(ateerrors.ReasonWorkloadNotReady) {
-		t.Errorf("after the RPC hop FailureReason = %q, want %q", got, ateerrors.ReasonWorkloadNotReady)
-	}
-}
-
-// asHandlerReturns mimics ateinterceptors: a status error in the chain is
-// forwarded whole, anything else collapses to codes.Internal with only a message.
-func asHandlerReturns(err error) error {
-	var statusErr interface{ GRPCStatus() *status.Status }
-	if errors.As(err, &statusErr) {
-		return statusErr.GRPCStatus().Err()
-	}
-	return status.Error(codes.Internal, err.Error())
 }

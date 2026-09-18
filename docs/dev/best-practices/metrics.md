@@ -177,7 +177,7 @@ first; the registry entry and the code then agree by construction.
 
 Before adding a label, ask what the dashboard groups by. A label nobody will
 group or filter by multiplies the series count for nothing. Three or four
-labels is typical; the restore histogram, with the most, has eight, and several
+labels is typical; the restore histogram, with the most, has six, and several
 are conditional.
 
 The SDK enforces a hard limit: 2000 distinct attribute sets per instrument,
@@ -199,10 +199,17 @@ failure key. Which key depends on where the error is classified:
   `ate.imagecache.requests` does with an allow-list of HTTP codes and `_OTHER`
   for everything else.
 * **`ate.failure.reason` and `ate.failure.domain`** together, when the failure
-  is one of substrate's own reasons (`internal/ateerrors`). Use
-  `ateattr.FailureAttributes(reason)`; never set the two keys by hand. This is
-  the right choice inside atelet and ateom handlers, where the gRPC status is
-  assigned only after the handler returns and would read `Unknown`.
+  is one of the bounded reasons in `internal/ateattr` (`ateattr.AllReasons`).
+  Use `ateattr.FailureAttributes(reason)`; never set the two keys by hand.
+  Only `ate.actor.crashes` carries the pair today: it is meaningful there
+  because the control plane's own crash paths (a corrupted assignment, a
+  worker gone, a worker reassigned) have a specific reason to report, and an
+  atelet RPC failure that crashes an actor reports `ateattr.ReasonUnknown`,
+  since the cause does not cross the process boundary to ateapi. Do not add
+  the pair to a metric where every failure would report the same constant
+  value — atelet's own restore/checkpoint duration histograms used to, and it
+  added no information; use `error.type` there instead if the metric needs a
+  failure signal at all.
 
 Separate a caller that gave up from a failure: `context.Canceled` and
 `context.DeadlineExceeded` are their own outcomes (`cancelled`, `timeout`) on
