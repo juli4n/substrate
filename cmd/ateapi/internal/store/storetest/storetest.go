@@ -35,6 +35,7 @@ import (
 	"github.com/agent-substrate/substrate/cmd/ateapi/internal/store/dockerenv"
 	"github.com/agent-substrate/substrate/pkg/proto/ateapipb"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 )
 
@@ -66,6 +67,7 @@ func SetupPostgresPersistence(t *testing.T) *atepg.Persistence {
 
 	config := admin.Config().Copy()
 	config.ConnConfig.Database = databaseName
+	config.MaxConns = 4
 	pool, err := pgxpool.NewWithConfig(ctx, config)
 	if err != nil {
 		t.Fatalf("connecting to PostgreSQL test database: %v", err)
@@ -171,6 +173,9 @@ func requireAdminPool(t *testing.T) *pgxpool.Pool {
 			postgres.WithDatabase("postgres"),
 			postgres.WithUsername("postgres"),
 			postgres.WithPassword("postgres"),
+			// Allow a large number of connections so that parallel tests
+			// can accommodate their connections.
+			testcontainers.WithCmdArgs("-c", "max_connections=1000"),
 		)
 		if containerErr != nil {
 			return
