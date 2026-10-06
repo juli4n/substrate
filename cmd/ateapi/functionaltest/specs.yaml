@@ -1,0 +1,1352 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+tests:
+  # ---------------------------------------------------------------------------
+  # Access policies
+  # ---------------------------------------------------------------------------
+
+  - name: CreateAtespaceAccessPolicy
+    resource: accesspolicies
+    description: |
+      Creates an access policy for an existing atespace and verifies that the
+      whole resource has the expected shape.
+
+  - name: CreateAtespaceAccessPolicy_AlreadyExists
+    resource: accesspolicies
+    description: |
+      Creating an access policy for an atespace that has one fails with
+      ALREADY_EXISTS and leaves the existing one unchanged.
+
+  - name: CreateAtespaceAccessPolicy_ValidationError
+    resource: accesspolicies
+    description: |
+      Creating an access policy with an invalid atespace name fails with
+      INVALID_ARGUMENT and the error names the invalid field.
+
+  - name: CreateAtespaceAccessPolicy_AtespaceNotFound
+    resource: accesspolicies
+    description: |
+      Creating an access policy for an atespace that doesn't exist fails with
+      FAILED_PRECONDITION.
+
+  - name: CreateAtespaceAccessPolicy_Authorization
+    resource: accesspolicies
+    description: |
+      Creating an atespace's access policy as a principal no access policy names
+      fails with PERMISSION_DENIED, both for an atespace that exists and for one
+      that does not, and no policy is created: getting it fails with NOT_FOUND.
+      Once the admin creates the atespace's policy, granting the principal the
+      viewer role, then the editor role, the principal still fails with
+      PERMISSION_DENIED. Granted the owner role, the principal is eventually
+      allowed, and fails with ALREADY_EXISTS because the policy exists.
+
+  - name: GetAtespaceAccessPolicy
+    resource: accesspolicies
+    description: |
+      Getting an existing access policy returns exactly the resource
+      CreateAtespaceAccessPolicy returned.
+
+  - name: GetAtespaceAccessPolicy_NotFound
+    resource: accesspolicies
+    description: |
+      Getting the access policy of an atespace that has none fails with
+      NOT_FOUND.
+
+  - name: GetAtespaceAccessPolicy_ValidationError
+    resource: accesspolicies
+    description: |
+      Getting an access policy with an invalid atespace name fails with
+      INVALID_ARGUMENT and the error names the invalid field.
+
+  - name: GetAtespaceAccessPolicy_AtespaceDeleted
+    resource: accesspolicies
+    description: |
+      After an atespace with an access policy is deleted, getting its access
+      policy fails with NOT_FOUND. An atespace created again under the same name
+      has no access policy either: getting it fails with NOT_FOUND.
+
+  - name: GetAtespaceAccessPolicy_Authorization
+    resource: accesspolicies
+    description: |
+      Getting an atespace's access policy as a principal it does not name fails
+      with PERMISSION_DENIED, as does getting the access policy of an atespace
+      that does not exist. Granted the viewer role, then the editor role, then
+      the owner role, by that policy, the principal eventually gets it (OK) each
+      time.
+
+  - name: UpdateAtespaceAccessPolicy
+    resource: accesspolicies
+    description: |
+      Updates the bindings of an existing access policy, sending it as read. The
+      result, and a later Get, is the resource as read with that field changed
+      and a higher version.
+
+  - name: UpdateAtespaceAccessPolicy_NotFound
+    resource: accesspolicies
+    description: |
+      Updating the access policy of an atespace that has none fails with
+      NOT_FOUND.
+
+  - name: UpdateAtespaceAccessPolicy_WithPreconditions
+    resource: accesspolicies
+    description: |
+      Updating an access policy with the wrong UID fails with ABORTED, and with
+      the right UID but the wrong version fails with ABORTED; both leave it
+      unchanged. Updating it without a UID or a version fails with
+      INVALID_ARGUMENT.
+
+  - name: UpdateAtespaceAccessPolicy_ValidationError
+    resource: accesspolicies
+    description: |
+      Updating an access policy with an invalid atespace name fails with
+      INVALID_ARGUMENT and the error names the invalid field.
+
+  - name: UpdateAtespaceAccessPolicy_Authorization
+    resource: accesspolicies
+    description: |
+      Updating an atespace's access policy as a principal it does not name fails
+      with PERMISSION_DENIED, as does updating the access policy of an atespace
+      that does not exist. Granted the viewer role, then the editor role, by
+      that policy, the principal still fails with PERMISSION_DENIED. Each
+      refused update leaves the policy unchanged. Granted the owner role, the
+      principal eventually updates it (OK).
+
+  - name: UpdateAtespaceAccessPolicy_RevokesAccess
+    resource: accesspolicies
+    description: |
+      A principal granted the viewer role by an atespace's access policy
+      eventually gets the atespace (OK). After the admin updates the policy to
+      no longer name the principal, getting the atespace eventually fails with
+      PERMISSION_DENIED.
+
+  - name: UpdateAtespaceAccessPolicy_DowngradesAccess
+    resource: accesspolicies
+    description: |
+      A principal granted the owner role by an atespace's access policy
+      eventually updates that policy (OK). After the admin changes the
+      principal's binding to the viewer role, deleting the atespace eventually
+      fails with PERMISSION_DENIED and leaves it unchanged, while getting it
+      still succeeds (OK).
+
+  - name: UpdateAtespaceAccessPolicy_ManyMembers
+    resource: accesspolicies
+    description: |
+      An atespace's access policy grants the viewer role to 250 principals, and
+      each of them eventually gets the atespace (OK). After the admin updates
+      the policy to name only the first of them, the first still gets the
+      atespace (OK), and each of the other 249 eventually fails with
+      PERMISSION_DENIED.
+
+  - name: DeleteAtespaceAccessPolicy
+    resource: accesspolicies
+    description: |
+      Deletes an existing access policy. The response is the deleted resource,
+      and a later Get fails with NOT_FOUND.
+
+  - name: DeleteAtespaceAccessPolicy_NotFound
+    resource: accesspolicies
+    description: |
+      Deleting the access policy of an atespace that has none fails with
+      NOT_FOUND.
+
+  - name: DeleteAtespaceAccessPolicy_WithPreconditions
+    resource: accesspolicies
+    description: |
+      Deleting an access policy with the wrong UID fails with ABORTED, and with
+      the right UID but the wrong version fails with ABORTED; both leave it
+      unchanged. With the right UID and version the delete succeeds.
+
+  - name: DeleteAtespaceAccessPolicy_ValidationError
+    resource: accesspolicies
+    description: |
+      Deleting an access policy with an invalid atespace name fails with
+      INVALID_ARGUMENT and the error names the invalid field.
+
+  - name: DeleteAtespaceAccessPolicy_Authorization
+    resource: accesspolicies
+    description: |
+      Deleting an atespace's access policy as a principal it does not name fails
+      with PERMISSION_DENIED, as does deleting the access policy of an atespace
+      that does not exist. Granted the viewer role, then the editor role, by
+      that policy, the principal still fails with PERMISSION_DENIED. Each
+      refused delete leaves the policy unchanged. Granted the owner role, the
+      principal eventually deletes it (OK).
+
+  - name: DeleteAtespaceAccessPolicy_RevokesAccess
+    resource: accesspolicies
+    description: |
+      A principal granted the viewer role by an atespace's access policy
+      eventually gets the atespace (OK). After the admin deletes the policy,
+      getting the atespace eventually fails with PERMISSION_DENIED.
+
+  - name: CreateGlobalAccessPolicy
+    resource: accesspolicies
+    description: |
+      Creates the global access policy and verifies that the whole resource has
+      the expected shape.
+
+  - name: CreateGlobalAccessPolicy_AlreadyExists
+    resource: accesspolicies
+    description: |
+      Creating the global access policy when it exists fails with ALREADY_EXISTS
+      and leaves the existing one unchanged.
+
+  - name: CreateGlobalAccessPolicy_ValidationError
+    resource: accesspolicies
+    description: |
+      Creating the global access policy with a name other than "default" fails
+      with INVALID_ARGUMENT and the error names the invalid field.
+
+  - name: CreateGlobalAccessPolicy_Authorization
+    resource: accesspolicies
+    description: |
+      Creating the global access policy as a principal no access policy names
+      fails with PERMISSION_DENIED, and no policy is created: getting it fails
+      with NOT_FOUND. Once the admin creates the global policy, granting the
+      principal the viewer role, the principal still fails with
+      PERMISSION_DENIED. Granted the owner role, the principal is eventually
+      allowed, and fails with ALREADY_EXISTS because the policy exists.
+
+  - name: GetGlobalAccessPolicy
+    resource: accesspolicies
+    description: |
+      Getting the global access policy returns exactly the resource
+      CreateGlobalAccessPolicy returned.
+
+  - name: GetGlobalAccessPolicy_NotFound
+    resource: accesspolicies
+    description: |
+      Getting the global access policy before it is created fails with
+      NOT_FOUND.
+
+  - name: GetGlobalAccessPolicy_Authorization
+    resource: accesspolicies
+    description: |
+      Getting the global access policy as a principal no access policy names
+      fails with PERMISSION_DENIED, both before the policy exists and after the
+      admin creates it without naming the principal. Granted the viewer role,
+      then the owner role, by that policy, the principal eventually gets it (OK)
+      each time.
+
+  - name: UpdateGlobalAccessPolicy
+    resource: accesspolicies
+    description: |
+      Updates the bindings of the global access policy, sending it as read. The
+      result, and a later Get, is the resource as read with that field changed
+      and a higher version.
+
+  - name: UpdateGlobalAccessPolicy_NotFound
+    resource: accesspolicies
+    description: |
+      Updating the global access policy before it is created fails with
+      NOT_FOUND.
+
+  - name: UpdateGlobalAccessPolicy_WithPreconditions
+    resource: accesspolicies
+    description: |
+      Updating the global access policy with the wrong UID fails with ABORTED,
+      and with the right UID but the wrong version fails with ABORTED; both
+      leave it unchanged. Updating it without a UID or a version fails with
+      INVALID_ARGUMENT.
+
+  - name: UpdateGlobalAccessPolicy_ValidationError
+    resource: accesspolicies
+    description: |
+      Updating the global access policy with a name other than "default" fails
+      with INVALID_ARGUMENT and the error names the invalid field.
+
+  - name: UpdateGlobalAccessPolicy_Authorization
+    resource: accesspolicies
+    description: |
+      Updating the global access policy as a principal no access policy names
+      fails with PERMISSION_DENIED, both before the policy exists and after the
+      admin creates it without naming the principal. Granted the viewer role by
+      that policy, the principal still fails with PERMISSION_DENIED. Each
+      refused update leaves the policy unchanged. Granted the owner role, the
+      principal eventually updates it (OK).
+
+  - name: UpdateGlobalAccessPolicy_RevokesInheritedAccess
+    resource: accesspolicies
+    description: |
+      A principal granted the viewer role by the global access policy eventually
+      gets an atespace that has no access policy of its own (OK). After the
+      admin updates the global policy to no longer name the principal, getting
+      the atespace eventually fails with PERMISSION_DENIED.
+
+  # ---------------------------------------------------------------------------
+  # Actors
+  # ---------------------------------------------------------------------------
+
+  - name: CreateActor
+    resource: actors
+    description: |
+      Creates an actor and verifies that the whole resource has the expected
+      shape.
+
+  - name: CreateActor_AlreadyExists
+    resource: actors
+    description: |
+      Creating an actor with the name of an existing one fails with
+      ALREADY_EXISTS.
+
+  - name: CreateActor_ValidationError
+    resource: actors
+    description: |
+      Creating an actor with an invalid name fails with INVALID_ARGUMENT and the
+      error names the invalid field.
+
+  - name: CreateActor_TemplateNotFound
+    resource: actors
+    description: |
+      Creating an actor that references an actor template that doesn't exist
+      fails with FAILED_PRECONDITION.
+
+  - name: CreateActor_StorageClassNotFound
+    resource: actors
+    description: |
+      Creating an actor with an external volume whose storage class doesn't
+      exist fails with FAILED_PRECONDITION.
+
+  - name: CreateActor_AtespaceNotFound
+    resource: actors
+    description: |
+      Creating an actor in an atespace that doesn't exist fails with
+      FAILED_PRECONDITION.
+
+  # TODO(): If a tag is not found, we should return FAILED_PRECONDITION instead
+  # of NOT_FOUND.
+  - name: CreateActor_TagNotFound
+    resource: actors
+    description: |
+      Creating an actor that references a tag that doesn't exist fails with
+      NOT_FOUND.
+
+  - name: GetActor
+    resource: actors
+    description: |
+      Getting an existing actor returns exactly the resource CreateActor
+      returned.
+
+  - name: GetActor_NotFound
+    resource: actors
+    description: |
+      Getting an actor that doesn't exist fails with NOT_FOUND.
+
+  - name: GetActor_ValidationError
+    resource: actors
+    description: |
+      Getting an actor with an invalid name fails with INVALID_ARGUMENT and the
+      error names the invalid field.
+
+  - name: ListActors
+    resource: actors
+    description: |
+      Creates N actors in one atespace and one in another, then lists the first
+      atespace with pages smaller than N. The pages together hold exactly its N
+      actors.
+
+  - name: ListActors_ValidationError
+    resource: actors
+    description: |
+      Listing actors with a negative page size fails with INVALID_ARGUMENT and
+      the error names the invalid field.
+
+  - name: ListActors_InvalidPageToken
+    resource: actors
+    description: |
+      Listing actors with a malformed page token fails with INVALID_ARGUMENT.
+
+  - name: ListActors_AtespaceNotFound
+    resource: actors
+    description: |
+      Listing actors in an atespace that doesn't exist succeeds with an empty
+      list.
+
+  - name: UpdateActor
+    resource: actors
+    description: |
+      Updates the worker selector of an existing actor, sending it as read. The
+      result, and a later Get, is the resource as read with that field changed
+      and a higher version.
+
+  - name: UpdateActor_NotFound
+    resource: actors
+    description: |
+      Updating an actor that doesn't exist fails with NOT_FOUND.
+
+  - name: UpdateActor_WithPreconditions
+    resource: actors
+    description: |
+      Updating an actor with the wrong UID fails with ABORTED, and with the
+      right UID but the wrong version fails with ABORTED; both leave it
+      unchanged. Updating it without a UID or a version fails with
+      INVALID_ARGUMENT.
+
+  - name: UpdateActor_ValidationError
+    resource: actors
+    description: |
+      Updating an actor with an invalid name fails with INVALID_ARGUMENT and the
+      error names the invalid field.
+
+  - name: DeleteActor
+    resource: actors
+    description: |
+      Deletes a suspended actor. The response is the actor as read before the
+      delete, marked DELETING, and a later Get fails with NOT_FOUND.
+
+  - name: DeleteActor_NotFound
+    resource: actors
+    description: |
+      Deleting an actor that doesn't exist fails with NOT_FOUND.
+
+  - name: DeleteActor_WithPreconditions
+    resource: actors
+    description: |
+      Deleting an actor with the wrong UID fails with ABORTED, and with the
+      right UID but the wrong version fails with ABORTED; both leave it
+      unchanged. With the right UID and version the delete succeeds.
+
+  - name: DeleteActor_ValidationError
+    resource: actors
+    description: |
+      Deleting an actor with an invalid name fails with INVALID_ARGUMENT and the
+      error names the invalid field.
+
+  - name: ResumeActor
+    resource: actors
+    description: |
+      Resumes a new actor on a pool with one worker on node a, and an unrelated
+      worker on node b. The response says it resumed and matches GetActor. The
+      actor becomes RUNNING with a worker assignment to the node a worker and is
+      otherwise unchanged. That worker's allocation goes to one actor, with one
+      assignment for this actor. The node a atelet received exactly one Restore,
+      from the template's golden snapshot, and runs exactly this actor's
+      sandbox. Node b's atelet received no calls, and object storage is
+      unchanged.
+
+  - name: ResumeActor_NotFound
+    resource: actors
+    description: |
+      Resuming an actor that doesn't exist fails with NOT_FOUND.
+
+  - name: ResumeActor_ValidationError
+    resource: actors
+    description: |
+      Resuming an actor with an invalid name fails with INVALID_ARGUMENT and the
+      error names the invalid field.
+
+  - name: ResumeActor_RestoreFails
+    resource: actors
+    description: |
+      Resumes a new actor while the atelet fails the Restore with INTERNAL. The
+      request fails with INTERNAL, and the actor becomes CRASHED with no worker
+      assignment. Its status.crash is set: a message naming the atelet Restore
+      and the atelet's error, and a crash time. It is otherwise unchanged. The
+      worker is left with no allocation and no assignments, and the atelet runs
+      no sandbox.
+
+  - name: ResumeActor_RestoreUnavailable
+    resource: actors
+    description: |
+      Resumes a new actor while the atelet fails the Restore with UNAVAILABLE.
+      The request fails with UNAVAILABLE, and the actor stays RESUMING with its
+      worker assignment, so a later resume can retry. The worker keeps its
+      allocation of one actor and its assignment for this actor, and the atelet
+      runs no sandbox.
+
+  - name: ResumeActor_WrongState
+    resource: actors
+    description: |
+      Resuming a crashed actor fails with FAILED_PRECONDITION and leaves the
+      actor unchanged.
+
+  - name: ResumeActor_AlreadyRunning
+    resource: actors
+    description: |
+      Resuming a running actor succeeds (OK) and reports that it did not resume
+      it. The actor is unchanged and the atelet receives no call.
+
+  - name: ResumeActor_FromSuspended
+    resource: actors
+    description: |
+      Resumes an actor that was suspended. The request succeeds (OK), the actor
+      becomes RUNNING, and the atelet receives a Restore of the actor's own
+      external snapshot, not the golden one.
+
+  - name: ResumeActor_FromPaused
+    resource: actors
+    description: |
+      Resumes a paused actor. The request succeeds (OK), the actor becomes
+      RUNNING on a worker of the node that paused it, and that node's atelet
+      receives a Restore of the actor's local snapshot.
+
+  - name: ResumeActor_WorkerFull
+    resource: actors
+    description: |
+      Resuming an actor while the pool's only worker hosts another actor fails
+      with RESOURCE_EXHAUSTED, leaves the actor unchanged, and makes no atelet
+      call. After the other actor is suspended, resuming succeeds (OK) on that
+      worker.
+
+  - name: ResumeActor_WorkerDraining
+    resource: actors
+    description: |
+      Resuming an actor while the pool's only worker is draining fails with
+      RESOURCE_EXHAUSTED, leaves the actor and the draining worker unchanged,
+      and makes no atelet call. After a new worker is added, resuming succeeds
+      (OK) on the new worker.
+
+  - name: ResumeActor_WorkerRemoved
+    resource: actors
+    description: |
+      Resuming an actor after the pool's only worker was removed fails with
+      RESOURCE_EXHAUSTED, leaves the actor unchanged, and makes no atelet call.
+      After a new worker is added, resuming succeeds (OK) on the new worker.
+
+  - name: ResumeActor_Retry
+    resource: actors
+    description: |
+      An actor left RESUMING by a Restore that failed with UNAVAILABLE is
+      resumed again. The request succeeds (OK), the actor becomes RUNNING on the
+      same worker, and that worker still holds exactly one assignment, for this
+      actor.
+
+  # TODO(): The request should fail with INTERNAL, as other resumes that crash
+  # the actor do. ABORTED makes callers like the atenet router retry a resume
+  # that cannot succeed.
+  - name: ResumeActor_RetryWorkerDrained
+    resource: actors
+    description: |
+      An actor left RESUMING by a Restore that failed with UNAVAILABLE has its
+      worker drained, and is resumed again. The request fails with ABORTED, and
+      the actor becomes CRASHED with no worker assignment and a crash message
+      saying its worker is draining.
+
+  - name: ResumeActor_RetryWorkerRemoved
+    resource: actors
+    description: |
+      An actor left RESUMING by a Restore that failed with UNAVAILABLE has its
+      worker removed. Removing the worker crashes the actor, with no worker
+      assignment and a crash message saying the worker pod went away, and
+      resuming it again fails with FAILED_PRECONDITION.
+
+  # TODO(): The request should fail with INTERNAL, as other resumes that crash
+  # the actor do. ABORTED makes callers like the atenet router retry a resume
+  # that cannot succeed.
+  - name: ResumeActor_RetryWorkerIneligible
+    resource: actors
+    description: |
+      An actor left RESUMING by a Restore that failed with UNAVAILABLE has its
+      worker relabeled so it no longer matches the template, and is resumed
+      again. The request fails with ABORTED, the actor becomes CRASHED with no
+      worker assignment and a crash message saying the worker no longer
+      satisfies its placement constraints, and the worker is released.
+
+  - name: ResumeActor_WithVolume
+    resource: actors
+    description: |
+      Resumes an actor whose template has an external volume. The request
+      succeeds (OK), the actor's volume is CREATED, and the volume plugin holds
+      that volume attached to the worker's node.
+
+  # TODO(): The request should fail with UNAVAILABLE when the volume plugin is
+  # unavailable, so callers like the atenet router retry it.
+  - name: ResumeActor_VolumeCreateFails
+    resource: actors
+    description: |
+      Resumes an actor whose template has an external volume while the volume
+      plugin fails CreateVolume. The request fails with INTERNAL and the actor
+      stays SUSPENDED. A later resume creates and attaches the volume and
+      succeeds (OK).
+
+  # TODO(): The request should fail with UNAVAILABLE when the volume plugin is
+  # unavailable, so callers like the atenet router retry it.
+  - name: ResumeActor_VolumeAttachFails
+    resource: actors
+    description: |
+      Resumes an actor whose template has an external volume while the volume
+      plugin fails AttachVolume once. The request fails with INTERNAL and the
+      actor stays RESUMING with its worker. A later resume attaches the volume
+      and succeeds (OK).
+
+  - name: ResumeActor_WithResourceLimits
+    resource: actors
+    description: |
+      Resumes an actor whose template limits it to 500m of CPU and 1Gi of
+      memory, on a worker reporting room for them. The request succeeds (OK),
+      the atelet's Restore carries those limits, and the worker's allocation
+      includes them.
+
+  - name: ResumeActor_Concurrent
+    resource: actors
+    description: |
+      Resumes an actor while a first resume of it is held at the atelet's
+      Restore. The second request fails with ABORTED. Once the first is released
+      it succeeds (OK), and the node runs exactly one sandbox for the actor.
+
+  - name: ResumeActor_GoldenSnapshotMissing
+    resource: actors
+    description: |
+      Resumes a new actor after its template's golden snapshot was deleted from
+      object storage. The request fails with INTERNAL, and the actor becomes
+      CRASHED with a crash message naming the atelet Restore.
+
+  - name: SuspendActor_NotFound
+    resource: actors
+    description: |
+      Suspending an actor that doesn't exist fails with NOT_FOUND.
+
+  - name: SuspendActor_ValidationError
+    resource: actors
+    description: |
+      Suspending an actor with an invalid name fails with INVALID_ARGUMENT and
+      the error names the invalid field.
+
+  - name: SuspendActor_WrongState
+    resource: actors
+    description: |
+      Suspending a crashed actor fails with FAILED_PRECONDITION and leaves the
+      actor unchanged.
+
+  - name: PauseActor_NotFound
+    resource: actors
+    description: |
+      Pausing an actor that doesn't exist fails with NOT_FOUND.
+
+  - name: PauseActor_ValidationError
+    resource: actors
+    description: |
+      Pausing an actor with an invalid name fails with INVALID_ARGUMENT and the
+      error names the invalid field.
+
+  - name: PauseActor_WrongState
+    resource: actors
+    description: |
+      Pausing a suspended actor fails with FAILED_PRECONDITION and leaves the
+      actor unchanged.
+
+  - name: RevertActor_NotFound
+    resource: actors
+    description: |
+      Reverting an actor that doesn't exist fails with NOT_FOUND.
+
+  - name: RevertActor_ValidationError
+    resource: actors
+    description: |
+      Reverting an actor with an invalid name fails with INVALID_ARGUMENT and
+      the error names the invalid field.
+
+  - name: RevertActor_WrongState
+    resource: actors
+    description: |
+      Reverting a suspended actor fails with FAILED_PRECONDITION and leaves the
+      actor unchanged.
+
+  - name: MintActorJWT_NotFound
+    resource: actors
+    description: |
+      Minting a JWT for an actor that doesn't exist fails with NOT_FOUND.
+
+  - name: MintActorJWT_ValidationError
+    resource: actors
+    description: |
+      Minting a JWT for an actor with an invalid name fails with
+      INVALID_ARGUMENT and the error names the invalid field.
+
+  - name: MintActorCertificate_ValidationError
+    resource: actors
+    description: |
+      Minting a certificate for an actor with an invalid name fails with
+      INVALID_ARGUMENT and the error names the invalid field.
+
+  - name: MintAteomActorCertificate_NotFound
+    resource: actors
+    description: |
+      Minting an ateom certificate, as a node's atelet, for an actor that
+      doesn't exist fails with NOT_FOUND.
+
+  - name: MintAteomActorCertificate_ValidationError
+    resource: actors
+    description: |
+      Minting an ateom certificate, as a node's atelet, for an actor with an
+      invalid name fails with INVALID_ARGUMENT and the error names the invalid
+      field.
+
+  - name: RequestActorSuspend_NotFound
+    resource: actors
+    description: |
+      Requesting, as a node's atelet, the suspend of an actor that doesn't exist
+      fails with NOT_FOUND.
+
+  - name: RequestActorSuspend_ValidationError
+    resource: actors
+    description: |
+      Requesting, as a node's atelet, the suspend of an actor with an invalid
+      name fails with INVALID_ARGUMENT and the error names the invalid field.
+
+  # ---------------------------------------------------------------------------
+  # Actor templates
+  # ---------------------------------------------------------------------------
+
+  - name: CreateActorTemplate
+    resource: actortemplates
+    description: |
+      Creates an actor template and verifies that the whole resource has the
+      expected shape.
+
+  - name: CreateActorTemplate_AlreadyExists
+    resource: actortemplates
+    description: |
+      Creating an actor template for an existing name fails with ALREADY_EXISTS
+      and leaves the existing one unchanged.
+
+  - name: CreateActorTemplate_ValidationError
+    resource: actortemplates
+    description: |
+      Creating an actor template with an invalid name fails with
+      INVALID_ARGUMENT and the error names the invalid field.
+
+  - name: CreateActorTemplate_AtespaceNotFound
+    resource: actortemplates
+    description: |
+      Creating an actor template in an atespace that doesn't exist fails with
+      FAILED_PRECONDITION, and no template is created.
+
+  - name: GetActorTemplate
+    resource: actortemplates
+    description: |
+      Getting an existing actor template returns exactly the resource
+      CreateActorTemplate returned.
+
+  - name: GetActorTemplate_NotFound
+    resource: actortemplates
+    description: |
+      Getting an actor template that doesn't exist fails with NOT_FOUND.
+
+  - name: GetActorTemplate_ValidationError
+    resource: actortemplates
+    description: |
+      Getting an actor template with an invalid name fails with INVALID_ARGUMENT
+      and the error names the invalid field.
+
+  - name: ListActorTemplates
+    resource: actortemplates
+    description: |
+      Creates N actor templates in one atespace and one in another, then lists
+      the first atespace with pages smaller than N. The pages together hold
+      exactly its N actor templates.
+
+  - name: ListActorTemplates_ValidationError
+    resource: actortemplates
+    description: |
+      Listing actor templates with a negative page size fails with
+      INVALID_ARGUMENT and the error names the invalid field.
+
+  - name: ListActorTemplates_InvalidPageToken
+    resource: actortemplates
+    description: |
+      Listing actor templates with a malformed page token fails with
+      INVALID_ARGUMENT.
+
+  - name: ListActorTemplates_AtespaceNotFound
+    resource: actortemplates
+    description: |
+      Listing actor templates in an atespace that doesn't exist succeeds with an
+      empty list.
+
+  - name: DeleteActorTemplate
+    resource: actortemplates
+    description: |
+      Deletes an existing actor template. The response is the deleted resource,
+      and a later Get fails with NOT_FOUND.
+
+  - name: DeleteActorTemplate_NotFound
+    resource: actortemplates
+    description: |
+      Deleting an actor template that doesn't exist fails with NOT_FOUND.
+
+  - name: DeleteActorTemplate_WithPreconditions
+    resource: actortemplates
+    description: |
+      Deleting an actor template with the wrong UID fails with ABORTED, and with
+      the right UID but the wrong version fails with ABORTED; both leave it
+      unchanged. With the right UID and version the delete succeeds.
+
+  - name: DeleteActorTemplate_ValidationError
+    resource: actortemplates
+    description: |
+      Deleting an actor template with an invalid name fails with
+      INVALID_ARGUMENT and the error names the invalid field.
+
+  # ---------------------------------------------------------------------------
+  # API wide
+  # ---------------------------------------------------------------------------
+
+  - name: RejectUnknownFields
+    resource: api
+    description: |
+      A request carrying a field the server does not know fails with
+      INVALID_ARGUMENT.
+
+  # ---------------------------------------------------------------------------
+  # Atespaces
+  # ---------------------------------------------------------------------------
+
+  - name: CreateAtespace
+    resource: atespaces
+    description: |
+      Creates an atespace and verifies that the whole resource has the expected
+      shape.
+
+  - name: CreateAtespace_AlreadyExists
+    resource: atespaces
+    description: |
+      Creating an atespace with the name of an existing one fails with
+      ALREADY_EXISTS.
+
+  - name: CreateAtespace_ValidationError
+    resource: atespaces
+    description: |
+      Creating an atespace with an invalid name fails with INVALID_ARGUMENT.
+
+  - name: CreateAtespace_Authorization
+    resource: atespaces
+    description: |
+      Creating an atespace as a principal no access policy names fails with
+      PERMISSION_DENIED. Granted the viewer role by the global access policy,
+      the principal still fails with PERMISSION_DENIED. In both cases no
+      atespace is created: getting it fails with NOT_FOUND. Granted the owner
+      role instead, the principal eventually creates the atespace (OK).
+
+  - name: GetAtespace
+    resource: atespaces
+    description: |
+      Getting an existing atespace returns exactly the resource CreateAtespace
+      returned.
+
+  - name: GetAtespace_NotFound
+    resource: atespaces
+    description: |
+      Getting an atespace that doesn't exist fails with NOT_FOUND.
+
+  - name: GetAtespace_ValidationError
+    resource: atespaces
+    description: |
+      Getting an atespace with an invalid name fails with INVALID_ARGUMENT and
+      the error names the invalid field.
+
+  - name: GetAtespace_Authorization
+    resource: atespaces
+    description: |
+      Getting an atespace as a principal no access policy names fails with
+      PERMISSION_DENIED, both for an atespace that exists and for one that does
+      not. Granted the viewer role, then the editor role, then the owner role,
+      by the atespace's access policy, the principal eventually gets the
+      atespace (OK) each time.
+
+  - name: GetAtespace_AtespaceRecreated
+    resource: atespaces
+    description: |
+      A principal granted the viewer role by an atespace's access policy
+      eventually gets the atespace (OK). After the admin deletes the atespace
+      and creates it again under the same name, getting it as the principal
+      eventually fails with PERMISSION_DENIED, and the new atespace has no
+      access policy: getting the policy fails with NOT_FOUND.
+
+  - name: ListAtespaces
+    resource: atespaces
+    description: |
+      Creates N atespaces and lists them with pages smaller than N.
+
+  - name: ListAtespaces_ValidationError
+    resource: atespaces
+    description: |
+      Listing atespaces with a negative page size fails with INVALID_ARGUMENT
+      and the error names the invalid field.
+
+  - name: ListAtespaces_InvalidPageToken
+    resource: atespaces
+    description: |
+      Listing atespaces with a malformed page token fails with INVALID_ARGUMENT.
+
+  - name: ListAtespaces_Authorization
+    resource: atespaces
+    description: |
+      Listing atespaces as a principal no access policy names fails with
+      PERMISSION_DENIED. Granted the viewer role, then the owner role, by the
+      global access policy, the principal eventually lists atespaces (OK) each
+      time.
+
+  - name: DeleteAtespace
+    resource: atespaces
+    description: |
+      Deletes an empty atespace. The response is the deleted atespace, and a
+      later Get fails with NOT_FOUND.
+
+  - name: DeleteAtespace_NotFound
+    resource: atespaces
+    description: |
+      Deleting an atespace that doesn't exist fails with NOT_FOUND.
+
+  - name: DeleteAtespace_WithPreconditions
+    resource: atespaces
+    description: |
+      Deleting an atespace with the wrong UID fails with ABORTED, and with the
+      right UID but the wrong version fails with ABORTED. With the right UID and
+      version the delete succeeds, and deleting it again fails with NOT_FOUND.
+
+  - name: DeleteAtespace_HasChildren
+    resource: atespaces
+    description: |
+      Deleting an atespace that holds an actor template fails with
+      FAILED_PRECONDITION.
+
+  - name: DeleteAtespace_ValidationError
+    resource: atespaces
+    description: |
+      Deleting an atespace with an invalid name fails with INVALID_ARGUMENT and
+      the error names the invalid field.
+
+  - name: DeleteAtespace_Authorization
+    resource: atespaces
+    description: |
+      Deleting an atespace as a principal no access policy names fails with
+      PERMISSION_DENIED, both for an atespace that exists and for one that does
+      not. Granted the viewer role, then the editor role, by the atespace's
+      access policy, the principal still fails with PERMISSION_DENIED, and the
+      atespace is unchanged. Granted the owner role instead, the principal
+      eventually deletes the atespace (OK).
+
+  # ---------------------------------------------------------------------------
+  # Actor egress policies
+  # ---------------------------------------------------------------------------
+
+  - name: CreateActorEgressPolicy
+    resource: egresspolicies
+    description: |
+      Creates an egress policy for an existing actor and verifies that the whole
+      resource has the expected shape.
+
+  - name: CreateActorEgressPolicy_AlreadyExists
+    resource: egresspolicies
+    description: |
+      Creating an egress policy for an existing actor name fails with
+      ALREADY_EXISTS and leaves the existing one unchanged.
+
+  - name: CreateActorEgressPolicy_ValidationError
+    resource: egresspolicies
+    description: |
+      Creating an egress policy with an invalid actor name fails with
+      INVALID_ARGUMENT and the error names the invalid field.
+
+  - name: CreateActorEgressPolicy_ActorNotFound
+    resource: egresspolicies
+    description: |
+      Creating an egress policy for an actor that doesn't exist fails with
+      FAILED_PRECONDITION.
+
+  - name: GetActorEgressPolicy
+    resource: egresspolicies
+    description: |
+      Getting an existing egress policy returns exactly the resource
+      CreateActorEgressPolicy returned.
+
+  - name: GetActorEgressPolicy_NotFound
+    resource: egresspolicies
+    description: |
+      Getting an egress policy that doesn't exist fails with NOT_FOUND.
+
+  - name: GetActorEgressPolicy_ValidationError
+    resource: egresspolicies
+    description: |
+      Getting an egress policy with an invalid actor name fails with
+      INVALID_ARGUMENT and the error names the invalid field.
+
+  - name: GetActorEgressPolicy_ActorDeleted
+    resource: egresspolicies
+    description: |
+      After an actor with an egress policy is deleted, getting its egress policy
+      fails with NOT_FOUND. An actor created again under the same name has no
+      egress policy either: getting it fails with NOT_FOUND.
+
+  - name: UpdateActorEgressPolicy
+    resource: egresspolicies
+    description: |
+      Updates the rules of an existing egress policy, sending it as read. The
+      result, and a later Get, is the resource as read with that field changed
+      and a higher version.
+
+  - name: UpdateActorEgressPolicy_NotFound
+    resource: egresspolicies
+    description: |
+      Updating an egress policy that doesn't exist fails with NOT_FOUND.
+
+  - name: UpdateActorEgressPolicy_WithPreconditions
+    resource: egresspolicies
+    description: |
+      Updating an egress policy with the wrong UID fails with ABORTED, and with
+      the right UID but the wrong version fails with ABORTED; both leave it
+      unchanged. Updating it without a UID or a version fails with
+      INVALID_ARGUMENT.
+
+  - name: UpdateActorEgressPolicy_ValidationError
+    resource: egresspolicies
+    description: |
+      Updating an egress policy with an invalid actor name fails with
+      INVALID_ARGUMENT and the error names the invalid field.
+
+  - name: DeleteActorEgressPolicy
+    resource: egresspolicies
+    description: |
+      Deletes an existing egress policy. The response is the deleted resource,
+      and a later Get fails with NOT_FOUND.
+
+  - name: DeleteActorEgressPolicy_NotFound
+    resource: egresspolicies
+    description: |
+      Deleting an egress policy that doesn't exist fails with NOT_FOUND.
+
+  - name: DeleteActorEgressPolicy_WithPreconditions
+    resource: egresspolicies
+    description: |
+      Deleting an egress policy with the wrong UID fails with ABORTED, and with
+      the right UID but the wrong version fails with ABORTED; both leave it
+      unchanged. With the right UID and version the delete succeeds.
+
+  - name: DeleteActorEgressPolicy_ValidationError
+    resource: egresspolicies
+    description: |
+      Deleting an egress policy with an invalid actor name fails with
+      INVALID_ARGUMENT and the error names the invalid field.
+
+  # ---------------------------------------------------------------------------
+  # Tags
+  # ---------------------------------------------------------------------------
+
+  - name: CreateTag
+    resource: tags
+    description: |
+      Creates a tag from a suspended actor and verifies that the whole resource
+      has the expected shape.
+
+  - name: CreateTag_AlreadyExists
+    resource: tags
+    description: |
+      Creating a tag for an existing name fails with ALREADY_EXISTS and leaves
+      the existing one unchanged.
+
+  - name: CreateTag_ValidationError
+    resource: tags
+    description: |
+      Creating a tag with an invalid name fails with INVALID_ARGUMENT and the
+      error names the invalid field.
+
+  # TODO(): If the source actor is not found, we should return
+  # FAILED_PRECONDITION instead of NOT_FOUND.
+  - name: CreateTag_SourceActorNotFound
+    resource: tags
+    description: |
+      Creating a tag from a source actor that doesn't exist fails with
+      NOT_FOUND, and no tag is created.
+
+  - name: GetTag
+    resource: tags
+    description: |
+      Getting an existing tag returns exactly the resource CreateTag returned.
+
+  - name: GetTag_NotFound
+    resource: tags
+    description: |
+      Getting a tag that doesn't exist fails with NOT_FOUND.
+
+  - name: GetTag_ValidationError
+    resource: tags
+    description: |
+      Getting a tag with an invalid name fails with INVALID_ARGUMENT and the
+      error names the invalid field.
+
+  - name: ListTags
+    resource: tags
+    description: |
+      Creates N tags in one atespace and one in another, then lists the first
+      atespace with pages smaller than N. The pages together hold exactly its N
+      tags.
+
+  - name: ListTags_ValidationError
+    resource: tags
+    description: |
+      Listing tags with a negative page size fails with INVALID_ARGUMENT and the
+      error names the invalid field.
+
+  - name: ListTags_InvalidPageToken
+    resource: tags
+    description: |
+      Listing tags with a malformed page token fails with INVALID_ARGUMENT.
+
+  - name: ListTags_AtespaceNotFound
+    resource: tags
+    description: |
+      Listing tags in an atespace that doesn't exist succeeds with an empty
+      list.
+
+  - name: UpdateTag
+    resource: tags
+    description: |
+      Updates the scope of an existing tag, sending it as read. The result, and
+      a later Get, is the resource as read with that field changed and a higher
+      version.
+
+  - name: UpdateTag_NotFound
+    resource: tags
+    description: |
+      Updating a tag that doesn't exist fails with NOT_FOUND.
+
+  - name: UpdateTag_WithPreconditions
+    resource: tags
+    description: |
+      Updating a tag with the wrong UID fails with ABORTED, and with the right
+      UID but the wrong version fails with ABORTED; both leave it unchanged.
+      Updating it without a UID or a version fails with INVALID_ARGUMENT.
+
+  - name: UpdateTag_ValidationError
+    resource: tags
+    description: |
+      Updating a tag with an invalid name fails with INVALID_ARGUMENT and the
+      error names the invalid field.
+
+  - name: DeleteTag
+    resource: tags
+    description: |
+      Deletes an existing tag. The response is the deleted resource, and a later
+      Get fails with NOT_FOUND.
+
+  - name: DeleteTag_NotFound
+    resource: tags
+    description: |
+      Deleting a tag that doesn't exist fails with NOT_FOUND.
+
+  - name: DeleteTag_WithPreconditions
+    resource: tags
+    description: |
+      Deleting a tag with the wrong UID fails with ABORTED, and with the right
+      UID but the wrong version fails with ABORTED; both leave it unchanged.
+      With the right UID and version the delete succeeds.
+
+  - name: DeleteTag_ValidationError
+    resource: tags
+    description: |
+      Deleting a tag with an invalid name fails with INVALID_ARGUMENT and the
+      error names the invalid field.
+
+  # ---------------------------------------------------------------------------
+  # Workers
+  # ---------------------------------------------------------------------------
+
+  - name: CreateWorker
+    resource: workers
+    description: |
+      Creates a worker and verifies that the whole resource has the expected
+      shape.
+
+  - name: CreateWorker_AlreadyExists
+    resource: workers
+    description: |
+      Creating a worker for an existing name fails with ALREADY_EXISTS and
+      leaves the existing one unchanged.
+
+  - name: CreateWorker_ValidationError
+    resource: workers
+    description: |
+      Creating a worker with an invalid name fails with INVALID_ARGUMENT and the
+      error names the invalid field.
+
+  - name: GetWorker
+    resource: workers
+    description: |
+      Getting an existing worker returns exactly the resource CreateWorker
+      returned.
+
+  - name: GetWorker_NotFound
+    resource: workers
+    description: |
+      Getting a worker that doesn't exist fails with NOT_FOUND.
+
+  - name: GetWorker_ValidationError
+    resource: workers
+    description: |
+      Getting a worker with an invalid name fails with INVALID_ARGUMENT and the
+      error names the invalid field.
+
+  - name: ListWorkers
+    resource: workers
+    description: |
+      Creates N workers and lists them with pages smaller than N. The pages
+      together hold exactly the N workers.
+
+  - name: ListWorkers_ValidationError
+    resource: workers
+    description: |
+      Listing workers with a negative page size fails with INVALID_ARGUMENT and
+      the error names the invalid field.
+
+  - name: ListWorkers_InvalidPageToken
+    resource: workers
+    description: |
+      Listing workers with a malformed page token fails with INVALID_ARGUMENT.
+
+  - name: UpdateWorker
+    resource: workers
+    description: |
+      Updates the labels of an existing worker, sending it as read. The result,
+      and a later Get, is the resource as read with that field changed and a
+      higher version.
+
+  - name: UpdateWorker_NotFound
+    resource: workers
+    description: |
+      Updating a worker that doesn't exist fails with NOT_FOUND.
+
+  - name: UpdateWorker_WithPreconditions
+    resource: workers
+    description: |
+      Updating a worker with the wrong UID fails with ABORTED, and with the
+      right UID but the wrong version fails with ABORTED; both leave it
+      unchanged. Updating it without a UID or a version fails with
+      INVALID_ARGUMENT.
+
+  - name: UpdateWorker_ValidationError
+    resource: workers
+    description: |
+      Updating a worker with an invalid name fails with INVALID_ARGUMENT and the
+      error names the invalid field.
+
+  - name: UpdateWorker_ImmutableField
+    resource: workers
+    description: |
+      Updating a worker's node name, sending it as read with only that field
+      changed, fails with INVALID_ARGUMENT and leaves the worker unchanged.
+
+  - name: DeleteWorker
+    resource: workers
+    description: |
+      Deletes an existing worker. The response is the worker as read before the
+      delete, marked DRAINING, and a later Get fails with NOT_FOUND.
+
+  - name: DeleteWorker_NotFound
+    resource: workers
+    description: |
+      Deleting a worker that doesn't exist fails with NOT_FOUND.
+
+  - name: DeleteWorker_WithPreconditions
+    resource: workers
+    description: |
+      Deleting a worker with the wrong UID fails with ABORTED, and with the
+      right UID but the wrong version fails with ABORTED; both leave it
+      unchanged. With the right UID and version the delete succeeds.
+
+  - name: DeleteWorker_ValidationError
+    resource: workers
+    description: |
+      Deleting a worker with an invalid name fails with INVALID_ARGUMENT and the
+      error names the invalid field.
+
+  - name: DeleteWorker_HostingActor
+    resource: workers
+    description: |
+      Deleting a worker that hosts a running actor succeeds (OK), and a later
+      Get of the worker fails with NOT_FOUND. The actor becomes CRASHED, with no
+      worker assignment and a crash message saying the worker pod went away
+      while hosting the actor.
+
+  - name: DrainWorker
+    resource: workers
+    description: |
+      Draining an active worker marks it DRAINING. The result, and a later Get,
+      is the worker as read with that state and a higher version.
+
+  - name: DrainWorker_NotFound
+    resource: workers
+    description: |
+      Draining a worker that doesn't exist fails with NOT_FOUND.
+
+  - name: DrainWorker_ValidationError
+    resource: workers
+    description: |
+      Draining a worker with an invalid name fails with INVALID_ARGUMENT and the
+      error names the invalid field.
+
+  - name: DrainWorker_AlreadyDraining
+    resource: workers
+    description: |
+      Draining a worker that is already DRAINING succeeds (OK). The response,
+      and a later Get, is the worker exactly as it was, its version included.
+
+  - name: ListWorkerActorAssignments
+    resource: workers
+    description: |
+      Lists the assignments of a worker hosting N running actors with pages
+      smaller than N. The pages together hold exactly one assignment per actor.
+
+  - name: ListWorkerActorAssignments_NotFound
+    resource: workers
+    description: |
+      Listing the assignments of a worker that doesn't exist fails with
+      NOT_FOUND.
+
+  - name: ListWorkerActorAssignments_ValidationError
+    resource: workers
+    description: |
+      Listing the assignments of a worker with a negative page size fails with
+      INVALID_ARGUMENT and the error names the invalid field.
+
+  - name: ListWorkerActorAssignments_InvalidPageToken
+    resource: workers
+    description: |
+      Listing the assignments of a worker with a malformed page token fails with
+      INVALID_ARGUMENT.
+
+  - name: SetWorkerCapacity
+    resource: workers
+    description: |
+      Reports, as the worker's node's atelet, room for 3 actors, 2 CPUs and 4Gi
+      of memory. The response, and a later Get, is the worker as read with that
+      capacity and a higher version. A second report, with room for 3 actors and
+      no resources, replaces the capacity: the worker no longer has CPU or
+      memory capacity.
+
+  - name: SetWorkerCapacity_NotFound
+    resource: workers
+    description: |
+      Reporting, as a node's atelet, the capacity of a worker that doesn't exist
+      fails with NOT_FOUND.
+
+  - name: SetWorkerCapacity_ValidationError
+    resource: workers
+    description: |
+      Reporting, as a node's atelet, the capacity of a worker with an invalid
+      name fails with INVALID_ARGUMENT and the error names the invalid field.
+
+  - name: SetWorkerCapacity_Unchanged
+    resource: workers
+    description: |
+      Reporting, as the worker's node's atelet, the capacity the worker already
+      has succeeds (OK) and leaves the worker unchanged, its version included.
+
+  - name: SetWorkerCapacity_OtherNode
+    resource: workers
+    description: |
+      Reporting the capacity of a worker as the atelet of a different node fails
+      with NOT_FOUND, as if the worker did not exist, and leaves the worker
+      unchanged.
