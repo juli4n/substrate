@@ -29,7 +29,7 @@ import (
 	"go.ate.dev/substrate/cmd/benchmarking/isolate/internal/fakeworker"
 	"go.ate.dev/substrate/cmd/benchmarking/isolate/internal/fakeworker/fakeworkertest"
 	"go.ate.dev/substrate/internal/credbundle"
-	"go.ate.dev/substrate/pkg/proto/ateapipb"
+	"go.ate.dev/substrate/internal/proto/workerservicepb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
@@ -45,33 +45,33 @@ const (
 // stubRelay is a stand-in fake-atelet relay: it records each report and
 // answers with err.
 type stubRelay struct {
-	ateapipb.UnimplementedWorkerServiceServer
+	workerservicepb.UnimplementedWorkerServiceServer
 
 	mu  sync.Mutex
-	got []*ateapipb.RegisterWorkerRequest
+	got []*workerservicepb.RegisterWorkerRequest
 	err error
 }
 
-func (s *stubRelay) RegisterWorker(_ context.Context, in *ateapipb.RegisterWorkerRequest) (*ateapipb.RegisterWorkerResponse, error) {
+func (s *stubRelay) RegisterWorker(_ context.Context, in *workerservicepb.RegisterWorkerRequest) (*workerservicepb.RegisterWorkerResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.got = append(s.got, in)
 	if s.err != nil {
 		return nil, s.err
 	}
-	return &ateapipb.RegisterWorkerResponse{}, nil
+	return &workerservicepb.RegisterWorkerResponse{}, nil
 }
 
 // relayServer serves svc with a certificate for serverID from ca, requiring
 // fake-workersync's certificate from ca, and returns its address.
-func relayServer(t *testing.T, ca *fakeworkertest.CA, serverID string, svc ateapipb.WorkerServiceServer) string {
+func relayServer(t *testing.T, ca *fakeworkertest.CA, serverID string, svc workerservicepb.WorkerServiceServer) string {
 	t.Helper()
 	return relayServerTrusting(t, ca, ca, serverID, svc)
 }
 
 // relayServerTrusting is relayServer with its certificate from ca and
 // fake-workersync's required to chain to clientCA.
-func relayServerTrusting(t *testing.T, ca, clientCA *fakeworkertest.CA, serverID string, svc ateapipb.WorkerServiceServer) string {
+func relayServerTrusting(t *testing.T, ca, clientCA *fakeworkertest.CA, serverID string, svc workerservicepb.WorkerServiceServer) string {
 	t.Helper()
 	pem, err := os.ReadFile(clientCA.TrustBundle)
 	if err != nil {
@@ -91,7 +91,7 @@ func relayServerTrusting(t *testing.T, ca, clientCA *fakeworkertest.CA, serverID
 			return fakeworker.VerifyPeerID(cs, testWorkerSyncID)
 		},
 	})))
-	ateapipb.RegisterWorkerServiceServer(srv, svc)
+	workerservicepb.RegisterWorkerServiceServer(srv, svc)
 	go func() { _ = srv.Serve(lis) }()
 	t.Cleanup(srv.Stop)
 	return lis.Addr().String()
@@ -107,10 +107,10 @@ func newTestRelay(t *testing.T, ca *fakeworkertest.CA) *grpcRelay {
 	return relay
 }
 
-func capacityReport() *ateapipb.RegisterWorkerRequest {
-	return &ateapipb.RegisterWorkerRequest{
-		Worker:   &ateapipb.ObjectRef{Name: "fake-r1-c52b9bd3-0"},
-		Capacity: &ateapipb.WorkerResources{Actors: 1000},
+func capacityReport() *workerservicepb.RegisterWorkerRequest {
+	return &workerservicepb.RegisterWorkerRequest{
+		Worker:   &workerservicepb.ObjectRef{Name: "fake-r1-c52b9bd3-0"},
+		Capacity: &workerservicepb.WorkerResources{Actors: 1000},
 	}
 }
 

@@ -17,27 +17,26 @@ package workerservice
 import (
 	"context"
 
-	"go.ate.dev/substrate/cmd/ateapi/internal/apivalidation"
 	"go.ate.dev/substrate/cmd/ateapi/internal/ateletauth"
+	"go.ate.dev/substrate/internal/proto/workerservicepb"
 	"go.ate.dev/substrate/internal/resources"
-	"go.ate.dev/substrate/pkg/proto/ateapipb"
 )
 
 // ReportActorSnapshotState records the snapshot state that the calling atelet
 // reports for an Actor on its node.
-func (s *Server) ReportActorSnapshotState(ctx context.Context, req *ateapipb.ReportActorSnapshotStateRequest) (*ateapipb.ReportActorSnapshotStateResponse, error) {
+func (s *Server) ReportActorSnapshotState(ctx context.Context, req *workerservicepb.ReportActorSnapshotStateRequest) (*workerservicepb.ReportActorSnapshotStateResponse, error) {
 	// Authz doesn't cover WorkerService, so authenticate before reading the
 	// request.
 	caller, err := ateletauth.Authenticate(ctx, s.ateletSPIFFEID)
 	if err != nil {
 		return nil, err
 	}
-	if errs := apivalidation.ValidateReportActorSnapshotStateRequest(ctx, req); len(errs) > 0 {
+	if errs := validateReportActorSnapshotStateRequest(ctx, req); len(errs) > 0 {
 		return nil, resources.ToAPIError(errs)
 	}
-	actorRef := resources.ActorRefFromObjectRef(req.GetActor())
+	actorRef := actorRefFromObjectRef(req.GetActor())
 	if err := s.control.ApplyActorSnapshotState(ctx, actorRef, req.GetActorUid(), caller.NodeName, req.GetState()); err != nil {
 		return nil, err
 	}
-	return &ateapipb.ReportActorSnapshotStateResponse{}, nil
+	return &workerservicepb.ReportActorSnapshotStateResponse{}, nil
 }

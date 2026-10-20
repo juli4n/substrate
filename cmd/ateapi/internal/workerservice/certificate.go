@@ -24,19 +24,18 @@ import (
 	"path"
 	"time"
 
-	"go.ate.dev/substrate/cmd/ateapi/internal/apivalidation"
 	"go.ate.dev/substrate/cmd/ateapi/internal/ateletauth"
 	"go.ate.dev/substrate/cmd/ateapi/internal/store"
 	"go.ate.dev/substrate/internal/apierror"
+	"go.ate.dev/substrate/internal/proto/workerservicepb"
 	"go.ate.dev/substrate/internal/resources"
 	"go.ate.dev/substrate/internal/substratex509"
-	"go.ate.dev/substrate/pkg/proto/ateapipb"
 )
 
 // MintWorkerActorCertificate mints a Substrate-issued SPIFFE certificate that asserts
 // a worker acting on behalf of a particular actor.
-func (s *Server) MintWorkerActorCertificate(ctx context.Context, req *ateapipb.MintWorkerActorCertificateRequest) (*ateapipb.MintWorkerActorCertificateResponse, error) {
-	if errs := apivalidation.ValidateMintWorkerActorCertificateRequest(ctx, req); len(errs) > 0 {
+func (s *Server) MintWorkerActorCertificate(ctx context.Context, req *workerservicepb.MintWorkerActorCertificateRequest) (*workerservicepb.MintWorkerActorCertificateResponse, error) {
+	if errs := validateMintWorkerActorCertificateRequest(ctx, req); len(errs) > 0 {
 		return nil, resources.ToAPIError(errs)
 	}
 
@@ -49,7 +48,7 @@ func (s *Server) MintWorkerActorCertificate(ctx context.Context, req *ateapipb.M
 	// TODO(authz): The egress gateway may also need certificates for actors
 	// (via a cluster-level grant?).
 
-	dbActor, err := s.store.GetActor(ctx, resources.ActorRefFromObjectRef(req.GetActor()))
+	dbActor, err := s.store.GetActor(ctx, actorRefFromObjectRef(req.GetActor()))
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, apierror.NotFound("actor not found")
 	} else if err != nil {
@@ -122,7 +121,7 @@ func (s *Server) MintWorkerActorCertificate(ctx context.Context, req *ateapipb.M
 		return nil, fmt.Errorf("while signing certificate: %w", err)
 	}
 
-	return &ateapipb.MintWorkerActorCertificateResponse{
+	return &workerservicepb.MintWorkerActorCertificateResponse{
 		ActorCertificates: chain,
 	}, nil
 }

@@ -30,6 +30,7 @@ import (
 	"github.com/google/uuid"
 	"go.ate.dev/substrate/cmd/benchmarking/isolate/internal/fakeworker"
 	"go.ate.dev/substrate/internal/hardware"
+	"go.ate.dev/substrate/internal/proto/workerservicepb"
 	atev1alpha1 "go.ate.dev/substrate/pkg/api/v1alpha1"
 	"go.ate.dev/substrate/pkg/proto/ateapipb"
 	"golang.org/x/sync/errgroup"
@@ -56,7 +57,7 @@ type workerClient interface {
 
 // capacityRelay sends a capacity report to the fake-atelet relay at addr.
 type capacityRelay interface {
-	Report(ctx context.Context, addr string, req *ateapipb.RegisterWorkerRequest) error
+	Report(ctx context.Context, addr string, req *workerservicepb.RegisterWorkerRequest) error
 	// Prune lets go of every relay not in live, the relay addresses by node.
 	Prune(live map[string]string)
 }
@@ -104,7 +105,7 @@ type fakeWorker struct {
 	tmpl *template
 	// capacity is fixed when the Worker is made, as worker reads its limits
 	// once at startup; reported is whether ate-api-server has accepted it.
-	capacity *ateapipb.WorkerResources
+	capacity *workerservicepb.WorkerResources
 	reported bool
 	draining bool
 	// drainedAt is when the controller drained the Worker, or adopted it
@@ -209,7 +210,7 @@ func (c *controller) adopt(ctx context.Context) error {
 				node:         w.GetNodeName(),
 				labels:       w.GetLabels(),
 				sandboxClass: w.GetSandboxClass(),
-				capacity:     w.GetStatus().GetCapacity(),
+				capacity:     fromAteAPIWorkerResources(w.GetStatus().GetCapacity()),
 				reported:     w.GetStatus().GetCapacity() != nil,
 				// One never marked available goes back through create, which
 				// marks it.
@@ -417,10 +418,10 @@ func (c *controller) ensure(ctx context.Context, pod string, d desiredWorker, w 
 	if addr == "" {
 		return fmt.Errorf("no fake-atelet on node %s yet for Worker %s", w.node, name)
 	}
-	if err := c.relay.Report(ctx, addr, &ateapipb.RegisterWorkerRequest{
-		Worker:   &ateapipb.ObjectRef{Name: name},
+	if err := c.relay.Report(ctx, addr, &workerservicepb.RegisterWorkerRequest{
+		Worker:   &workerservicepb.ObjectRef{Name: name},
 		Capacity: fixed,
-		DefaultRuntime: &ateapipb.SandboxRuntime{
+		DefaultRuntime: &workerservicepb.SandboxRuntime{
 			SandboxClass: string(d.pool.Spec.DefaultSandboxClass()),
 			Version:      hostCompat(),
 		},
@@ -433,11 +434,22 @@ func (c *controller) ensure(ctx context.Context, pod string, d desiredWorker, w 
 	return nil
 }
 
-func hostCompat() *ateapipb.VersionedSandboxCompat {
+func fromAteAPIWorkerResources(in *ateapipb.WorkerResources) *workerservicepb.WorkerResources {
+	if in == nil {
+		return nil
+	}
+	return &workerservicepb.WorkerResources{
+		CpuMillicores: in.GetCpuMillicores(),
+		MemoryBytes:   in.GetMemoryBytes(),
+		Actors:        in.GetActors(),
+	}
+}
+
+func hostCompat() *workerservicepb.VersionedSandboxCompat {
 	in := hardware.ProbeHost()
-	out := &ateapipb.VersionedSandboxCompat{SchemaVersion: in.GetSchemaVersion()}
+	out := &workerservicepb.VersionedSandboxCompat{SchemaVersion: in.GetSchemaVersion()}
 	for _, a := range in.GetAttributes() {
-		out.Attributes = append(out.Attributes, &ateapipb.AttributeEntry{Key: a.GetKey(), Value: a.GetValue()})
+		out.Attributes = append(out.Attributes, &workerservicepb.AttributeEntry{Key: a.GetKey(), Value: a.GetValue()})
 	}
 	return out
 }
@@ -628,7 +640,7 @@ func templateOf(wp *atev1alpha1.WorkerPool) (template, error) {
 // cpu and memory from its limits, or, with no limit set, the node's
 // allocatable, which is what the downward API projects into worker for an
 // unset limit.
-func (t template) capacity(allocatable corev1.ResourceList) *ateapipb.WorkerResources {
+func (t template) capacity(allocatable corev1.ResourceList) *workerservicepb.WorkerResources {
 	cpu, memory := t.cpuMilli, t.memoryBytes
 	if cpu == 0 {
 		cpu = allocatable.Cpu().MilliValue()
@@ -636,7 +648,7 @@ func (t template) capacity(allocatable corev1.ResourceList) *ateapipb.WorkerReso
 	if memory == 0 {
 		memory = allocatable.Memory().Value()
 	}
-	return &ateapipb.WorkerResources{Actors: int32(t.actors), CpuMillicores: cpu, MemoryBytes: memory}
+	return &workerservicepb.WorkerResources{Actors: int32(t.actors), CpuMillicores: cpu, MemoryBytes: memory}
 }
 
 // fits reports whether w was made from wp's current template, so a real pool

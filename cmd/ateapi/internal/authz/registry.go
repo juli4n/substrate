@@ -18,6 +18,7 @@ import (
 	"slices"
 
 	"go.ate.dev/substrate/internal/apierror"
+	"go.ate.dev/substrate/internal/proto/workerservicepb"
 	"go.ate.dev/substrate/internal/resources"
 	"go.ate.dev/substrate/pkg/proto/ateapipb"
 	"k8s.io/apimachinery/pkg/util/validation/field"
@@ -334,10 +335,10 @@ var defaultRPCPermissions = map[string]rpcRule{
 
 	// WorkerService is served only to atelet, which each handler
 	// authenticates by its mTLS SPIFFE ID.
-	ateapipb.WorkerService_RegisterWorker_FullMethodName:             inHandler("ateletauth: caller is atelet on the Worker's node"),
-	ateapipb.WorkerService_ReportActorCrashed_FullMethodName:         inHandler("ateletauth: caller is atelet on the node of the Worker hosting the Actor"),
-	ateapipb.WorkerService_RequestActorSuspend_FullMethodName:        inHandler("ateletauth: caller is atelet on the node of the Worker hosting the Actor"),
-	ateapipb.WorkerService_MintWorkerActorCertificate_FullMethodName: inHandler("ateletauth: caller is atelet on the node of the Worker the Actor is assigned to"),
-	ateapipb.WorkerService_MintWorkerActorJwt_FullMethodName:         inHandler("ateletauth: caller is atelet on the node hosting the Actor"),
-	ateapipb.WorkerService_ReportActorSnapshotState_FullMethodName:   inHandler("ateletauth: caller is atelet on the node the Actor is placed on or holds a local snapshot of it"),
+	workerservicepb.WorkerService_RegisterWorker_FullMethodName:             inHandler("ateletauth: caller is atelet on the Worker's node"),
+	workerservicepb.WorkerService_ReportActorCrashed_FullMethodName:         inHandler("ateletauth: caller is atelet on the node of the Worker hosting the Actor"),
+	workerservicepb.WorkerService_RequestActorSuspend_FullMethodName:        inHandler("ateletauth: caller is atelet on the node of the Worker hosting the Actor"),
+	workerservicepb.WorkerService_MintWorkerActorCertificate_FullMethodName: inHandler("ateletauth: caller is atelet on the node of the Worker the Actor is assigned to"),
+	workerservicepb.WorkerService_MintWorkerActorJwt_FullMethodName:         inHandler("ateletauth: caller is atelet on the node hosting the Actor"),
+	workerservicepb.WorkerService_ReportActorSnapshotState_FullMethodName:   inHandler("ateletauth: caller is atelet on the node the Actor is placed on or holds a local snapshot of it"),
 }

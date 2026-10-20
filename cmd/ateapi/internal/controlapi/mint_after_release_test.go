@@ -32,6 +32,7 @@ import (
 	"go.ate.dev/substrate/internal/apierror"
 	"go.ate.dev/substrate/internal/installdefaults"
 	"go.ate.dev/substrate/internal/localca"
+	"go.ate.dev/substrate/internal/proto/workerservicepb"
 	"go.ate.dev/substrate/internal/resources"
 	"go.ate.dev/substrate/pkg/proto/ateapipb"
 	"google.golang.org/grpc/codes"
@@ -102,11 +103,11 @@ func TestMintWorkerActorCertificateAfterWorkerRelease(t *testing.T) {
 			// atelet on node.
 			mintAs := func(worker string) codes.Code {
 				t.Helper()
-				_, err := minter.MintWorkerActorCertificate(ateletauthtest.ContextWith(ateletauthtest.CertOn(t, node)), &ateapipb.MintWorkerActorCertificateRequest{
-					Actor:                     &ateapipb.ObjectRef{Atespace: actorRef.Atespace, Name: actorRef.Name},
+				_, err := minter.MintWorkerActorCertificate(ateletauthtest.ContextWith(ateletauthtest.CertOn(t, node)), &workerservicepb.MintWorkerActorCertificateRequest{
+					Actor:                     &workerservicepb.ObjectRef{Atespace: actorRef.Atespace, Name: actorRef.Name},
 					ActorUid:                  uid,
 					CertificateSigningRequest: csr,
-					Worker:                    &ateapipb.ObjectRef{Name: worker},
+					Worker:                    &workerservicepb.ObjectRef{Name: worker},
 				})
 				return apierror.Code(err)
 			}

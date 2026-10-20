@@ -29,7 +29,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"go.ate.dev/substrate/internal/proto/ateletpb"
-	"go.ate.dev/substrate/pkg/proto/ateapipb"
+	"go.ate.dev/substrate/internal/proto/workerservicepb"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/testing/protocmp"
@@ -286,12 +286,12 @@ func TestHerderWarnsOnlyWhenWriteOutlastsANonzeroDelay(t *testing.T) {
 // recordingMinter records every mint, as ate-api-server's WorkerService.
 type recordingMinter struct {
 	mu    sync.Mutex
-	reqs  []*ateapipb.MintWorkerActorCertificateRequest
+	reqs  []*workerservicepb.MintWorkerActorCertificateRequest
 	err   error
 	delay time.Duration
 }
 
-func (m *recordingMinter) MintWorkerActorCertificate(_ context.Context, in *ateapipb.MintWorkerActorCertificateRequest, _ ...grpc.CallOption) (*ateapipb.MintWorkerActorCertificateResponse, error) {
+func (m *recordingMinter) MintWorkerActorCertificate(_ context.Context, in *workerservicepb.MintWorkerActorCertificateRequest, _ ...grpc.CallOption) (*workerservicepb.MintWorkerActorCertificateResponse, error) {
 	if m.delay > 0 {
 		time.Sleep(m.delay)
 	}
@@ -301,10 +301,10 @@ func (m *recordingMinter) MintWorkerActorCertificate(_ context.Context, in *atea
 	if m.err != nil {
 		return nil, m.err
 	}
-	return &ateapipb.MintWorkerActorCertificateResponse{ActorCertificates: [][]byte{[]byte("leaf")}}, nil
+	return &workerservicepb.MintWorkerActorCertificateResponse{ActorCertificates: [][]byte{[]byte("leaf")}}, nil
 }
 
-func (m *recordingMinter) mints() []*ateapipb.MintWorkerActorCertificateRequest {
+func (m *recordingMinter) mints() []*workerservicepb.MintWorkerActorCertificateRequest {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return slices.Clone(m.reqs)
@@ -354,12 +354,12 @@ func TestHerderMintsActorCertificateOnActivation(t *testing.T) {
 			if len(got) != 1 {
 				t.Fatalf("%s minted %d times, want once", name, len(got))
 			}
-			want := &ateapipb.ObjectRef{Atespace: "team-a", Name: "sleep-1"}
+			want := &workerservicepb.ObjectRef{Atespace: "team-a", Name: "sleep-1"}
 			if !proto.Equal(got[0].GetActor(), want) || got[0].GetActorUid() != testActorUID {
 				t.Errorf("%s minted for %v/%q, want %v/%q", name, got[0].GetActor(), got[0].GetActorUid(), want, testActorUID)
 			}
 			// The control plane mints only for the worker hosting the actor.
-			if got, want := got[0].GetWorker(), (&ateapipb.ObjectRef{Name: testWorkerPodUID}); !proto.Equal(got, want) {
+			if got, want := got[0].GetWorker(), (&workerservicepb.ObjectRef{Name: testWorkerPodUID}); !proto.Equal(got, want) {
 				t.Errorf("%s minted as worker %v, want %v", name, got, want)
 			}
 			// ate-api-server parses the CSR and checks its signature.

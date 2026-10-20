@@ -22,10 +22,10 @@ import (
 	"log/slog"
 	"slices"
 
-	"go.ate.dev/substrate/cmd/ateapi/internal/apivalidation"
 	"go.ate.dev/substrate/cmd/ateapi/internal/ateletauth"
 	"go.ate.dev/substrate/cmd/ateapi/internal/store"
 	"go.ate.dev/substrate/internal/apierror"
+	"go.ate.dev/substrate/internal/proto/workerservicepb"
 	"go.ate.dev/substrate/internal/resources"
 	"go.ate.dev/substrate/pkg/proto/ateapipb"
 	"google.golang.org/protobuf/proto"
@@ -34,18 +34,18 @@ import (
 // RegisterWorker records a Worker's reported capacity and sandbox runtimes in
 // one write. As with MintCert, the caller must be an atelet running on the
 // Worker's node.
-func (s *Server) RegisterWorker(ctx context.Context, req *ateapipb.RegisterWorkerRequest) (*ateapipb.RegisterWorkerResponse, error) {
+func (s *Server) RegisterWorker(ctx context.Context, req *workerservicepb.RegisterWorkerRequest) (*workerservicepb.RegisterWorkerResponse, error) {
 	// TODO(identity): This check should be handled by OpenFGA.
 	caller, err := ateletauth.Authenticate(ctx, s.ateletSPIFFEID)
 	if err != nil {
 		return nil, err
 	}
-	if errs := apivalidation.ValidateRegisterWorkerRequest(ctx, req); len(errs) > 0 {
+	if errs := validateRegisterWorkerRequest(ctx, req); len(errs) > 0 {
 		return nil, resources.ToAPIError(errs)
 	}
-	reported := req.GetCapacity()
-	defaultRuntime := req.GetDefaultRuntime()
-	restorable := req.GetRestorableRuntimes()
+	reported := toAteAPIWorkerResources(req.GetCapacity())
+	defaultRuntime := toAteAPISandboxRuntime(req.GetDefaultRuntime())
+	restorable := toAteAPISandboxRuntimes(req.GetRestorableRuntimes())
 	name := req.GetWorker().GetName()
 	sortAttributes(defaultRuntime)
 	for _, rt := range restorable {
@@ -77,7 +77,7 @@ func (s *Server) RegisterWorker(ctx context.Context, req *ateapipb.RegisterWorke
 	if proto.Equal(status.GetCapacity(), reported) &&
 		proto.Equal(status.GetDefaultRuntime(), defaultRuntime) &&
 		sameRuntimes(status.GetRestorableRuntimes(), restorable) {
-		return &ateapipb.RegisterWorkerResponse{Worker: worker}, nil
+		return &workerservicepb.RegisterWorkerResponse{}, nil
 	}
 
 	updated, err := s.store.UpdateWorker(ctx, name, store.PreconditionFrom(worker), func(toUpdate *ateapipb.Worker) error {
@@ -104,7 +104,7 @@ func (s *Server) RegisterWorker(ctx context.Context, req *ateapipb.RegisterWorke
 		slog.String("now", updated.GetStatus().GetCapacity().String()),
 		slog.String("default_runtime", updated.GetStatus().GetDefaultRuntime().String()),
 		slog.Int("restorable_runtimes", len(updated.GetStatus().GetRestorableRuntimes())))
-	return &ateapipb.RegisterWorkerResponse{Worker: updated}, nil
+	return &workerservicepb.RegisterWorkerResponse{}, nil
 }
 
 // validateRuntimeClasses rejects a runtime of a class other than the Worker's
@@ -112,7 +112,7 @@ func (s *Server) RegisterWorker(ctx context.Context, req *ateapipb.RegisterWorke
 // sandbox its worker runs, so a runtime of another class contradicts the
 // recorded Worker state. A Worker recorded without a class has nothing for a
 // report to contradict.
-func validateRuntimeClasses(class string, req *ateapipb.RegisterWorkerRequest) error {
+func validateRuntimeClasses(class string, req *workerservicepb.RegisterWorkerRequest) error {
 	if class == "" {
 		return nil
 	}
@@ -142,4 +142,53 @@ func sortAttributes(rt *ateapipb.SandboxRuntime) {
 	slices.SortFunc(rt.GetVersion().GetAttributes(), func(a, b *ateapipb.AttributeEntry) int {
 		return cmp.Compare(a.GetKey(), b.GetKey())
 	})
+}
+
+func toAteAPIWorkerResources(r *workerservicepb.WorkerResources) *ateapipb.WorkerResources {
+	if r == nil {
+		return nil
+	}
+	return &ateapipb.WorkerResources{
+		CpuMillicores: r.GetCpuMillicores(),
+		MemoryBytes:   r.GetMemoryBytes(),
+		Actors:        r.GetActors(),
+	}
+}
+
+func toAteAPISandboxRuntimes(in []*workerservicepb.SandboxRuntime) []*ateapipb.SandboxRuntime {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]*ateapipb.SandboxRuntime, len(in))
+	for i, rt := range in {
+		out[i] = toAteAPISandboxRuntime(rt)
+	}
+	return out
+}
+
+func toAteAPISandboxRuntime(rt *workerservicepb.SandboxRuntime) *ateapipb.SandboxRuntime {
+	if rt == nil {
+		return nil
+	}
+	var version *ateapipb.VersionedSandboxCompat
+	if v := rt.GetVersion(); v != nil {
+		var attrs []*ateapipb.AttributeEntry
+		if in := v.GetAttributes(); len(in) > 0 {
+			attrs = make([]*ateapipb.AttributeEntry, len(in))
+			for i, a := range in {
+				attrs[i] = &ateapipb.AttributeEntry{
+					Key:   a.GetKey(),
+					Value: a.GetValue(),
+				}
+			}
+		}
+		version = &ateapipb.VersionedSandboxCompat{
+			SchemaVersion: v.GetSchemaVersion(),
+			Attributes:    attrs,
+		}
+	}
+	return &ateapipb.SandboxRuntime{
+		SandboxClass: rt.GetSandboxClass(),
+		Version:      version,
+	}
 }

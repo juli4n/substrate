@@ -29,6 +29,7 @@ import (
 	"go.ate.dev/substrate/cmd/ateapi/internal/store"
 	"go.ate.dev/substrate/internal/apierror"
 	"go.ate.dev/substrate/internal/localca"
+	"go.ate.dev/substrate/internal/proto/workerservicepb"
 	"go.ate.dev/substrate/internal/resources"
 	"go.ate.dev/substrate/internal/substratex509"
 	"go.ate.dev/substrate/pkg/proto/ateapipb"
@@ -132,14 +133,14 @@ func TestMintWorkerActorCertificate(t *testing.T) {
 	csr, key := generateTestCSR(t)
 
 	ctx := ateletauthtest.ContextWith(ateletauthtest.CertOn(t, "node-1"))
-	resp, err := s.MintWorkerActorCertificate(ctx, &ateapipb.MintWorkerActorCertificateRequest{
-		Actor: &ateapipb.ObjectRef{
+	resp, err := s.MintWorkerActorCertificate(ctx, &workerservicepb.MintWorkerActorCertificateRequest{
+		Actor: &workerservicepb.ObjectRef{
 			Atespace: "team-a",
 			Name:     "my-actor",
 		},
 		ActorUid:                  actor.GetMetadata().GetUid(),
 		CertificateSigningRequest: csr,
-		Worker:                    &ateapipb.ObjectRef{Name: "worker-1"},
+		Worker:                    &workerservicepb.ObjectRef{Name: "worker-1"},
 	})
 	if err != nil {
 		t.Fatalf("MintWorkerActorCertificate() failed: %v", err)
@@ -186,12 +187,12 @@ func TestMintWorkerActorCertificate_Errors(t *testing.T) {
 	authed := ateletauthtest.ContextWith(ateletauthtest.CertOn(t, "node-1"))
 	otherNode := ateletauthtest.ContextWith(ateletauthtest.CertOn(t, "node-2"))
 
-	valid := func() *ateapipb.MintWorkerActorCertificateRequest {
-		return &ateapipb.MintWorkerActorCertificateRequest{
-			Actor:                     &ateapipb.ObjectRef{Atespace: "team-a", Name: "my-actor"},
+	valid := func() *workerservicepb.MintWorkerActorCertificateRequest {
+		return &workerservicepb.MintWorkerActorCertificateRequest{
+			Actor:                     &workerservicepb.ObjectRef{Atespace: "team-a", Name: "my-actor"},
 			ActorUid:                  actor.GetMetadata().GetUid(),
 			CertificateSigningRequest: csr,
-			Worker:                    &ateapipb.ObjectRef{Name: "worker-1"},
+			Worker:                    &workerservicepb.ObjectRef{Name: "worker-1"},
 		}
 	}
 	const (
@@ -216,7 +217,7 @@ func TestMintWorkerActorCertificate_Errors(t *testing.T) {
 	tests := []struct {
 		name   string
 		ctx    context.Context
-		mutate func(*ateapipb.MintWorkerActorCertificateRequest)
+		mutate func(*workerservicepb.MintWorkerActorCertificateRequest)
 		// status, when set, replaces the actor's status for the case.
 		status *ateapipb.ActorStatus
 		// assignments, when set, replaces the store's worker assignments
@@ -343,21 +344,21 @@ func TestMintWorkerActorCertificate_Errors(t *testing.T) {
 			// check answering Aborted: the node check runs first.
 			name:   "actor hosted on another node, stale uid",
 			ctx:    otherNode,
-			mutate: func(r *ateapipb.MintWorkerActorCertificateRequest) { r.ActorUid = staleUID },
+			mutate: func(r *workerservicepb.MintWorkerActorCertificateRequest) { r.ActorUid = staleUID },
 			want:   codes.NotFound,
 		},
 		{
 			// worker-2 runs on the actor's node, but the actor is not its own.
 			name:   "another worker on the actor's node",
 			ctx:    authed,
-			mutate: func(r *ateapipb.MintWorkerActorCertificateRequest) { r.Worker.Name = "worker-2" },
+			mutate: func(r *workerservicepb.MintWorkerActorCertificateRequest) { r.Worker.Name = "worker-2" },
 			want:   codes.NotFound,
 		},
 		{
 			// The worker check also runs before the UID check.
 			name: "another worker on the actor's node, stale uid",
 			ctx:  authed,
-			mutate: func(r *ateapipb.MintWorkerActorCertificateRequest) {
+			mutate: func(r *workerservicepb.MintWorkerActorCertificateRequest) {
 				r.Worker.Name = "worker-2"
 				r.ActorUid = staleUID
 			},
@@ -405,7 +406,7 @@ func TestMintWorkerActorCertificate_Errors(t *testing.T) {
 			ctx:         authed,
 			status:      pausedStatus(ateapipb.ActorState_ACTOR_STATE_SUSPENDED, "node-1"),
 			assignments: released,
-			mutate:      func(r *ateapipb.MintWorkerActorCertificateRequest) { r.Worker.Name = "" },
+			mutate:      func(r *workerservicepb.MintWorkerActorCertificateRequest) { r.Worker.Name = "" },
 			want:        codes.InvalidArgument,
 		},
 		{
@@ -447,37 +448,37 @@ func TestMintWorkerActorCertificate_Errors(t *testing.T) {
 		{
 			name:   "missing actor",
 			ctx:    authed,
-			mutate: func(r *ateapipb.MintWorkerActorCertificateRequest) { r.Actor = nil },
+			mutate: func(r *workerservicepb.MintWorkerActorCertificateRequest) { r.Actor = nil },
 			want:   codes.InvalidArgument,
 		},
 		{
 			name:   "missing actor uid",
 			ctx:    authed,
-			mutate: func(r *ateapipb.MintWorkerActorCertificateRequest) { r.ActorUid = "" },
+			mutate: func(r *workerservicepb.MintWorkerActorCertificateRequest) { r.ActorUid = "" },
 			want:   codes.InvalidArgument,
 		},
 		{
 			name:   "missing csr",
 			ctx:    authed,
-			mutate: func(r *ateapipb.MintWorkerActorCertificateRequest) { r.CertificateSigningRequest = nil },
+			mutate: func(r *workerservicepb.MintWorkerActorCertificateRequest) { r.CertificateSigningRequest = nil },
 			want:   codes.InvalidArgument,
 		},
 		{
 			name:   "missing worker",
 			ctx:    authed,
-			mutate: func(r *ateapipb.MintWorkerActorCertificateRequest) { r.Worker = nil },
+			mutate: func(r *workerservicepb.MintWorkerActorCertificateRequest) { r.Worker = nil },
 			want:   codes.InvalidArgument,
 		},
 		{
 			name:   "worker with an atespace",
 			ctx:    authed,
-			mutate: func(r *ateapipb.MintWorkerActorCertificateRequest) { r.Worker.Atespace = "team-a" },
+			mutate: func(r *workerservicepb.MintWorkerActorCertificateRequest) { r.Worker.Atespace = "team-a" },
 			want:   codes.InvalidArgument,
 		},
 		{
 			name:   "actor not found",
 			ctx:    authed,
-			mutate: func(r *ateapipb.MintWorkerActorCertificateRequest) { r.Actor.Name = "nonexistent" },
+			mutate: func(r *workerservicepb.MintWorkerActorCertificateRequest) { r.Actor.Name = "nonexistent" },
 			want:   codes.NotFound,
 		},
 		{
@@ -485,7 +486,7 @@ func TestMintWorkerActorCertificate_Errors(t *testing.T) {
 			// recreated.
 			name:   "stale actor uid",
 			ctx:    authed,
-			mutate: func(r *ateapipb.MintWorkerActorCertificateRequest) { r.ActorUid = staleUID },
+			mutate: func(r *workerservicepb.MintWorkerActorCertificateRequest) { r.ActorUid = staleUID },
 			want:   codes.Aborted,
 		},
 	}

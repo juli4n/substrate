@@ -21,6 +21,7 @@ import (
 
 	"go.ate.dev/substrate/internal/apierror"
 	"go.ate.dev/substrate/internal/principal"
+	"go.ate.dev/substrate/internal/proto/workerservicepb"
 	"go.ate.dev/substrate/pkg/proto/ateapipb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -281,11 +282,11 @@ func TestUnaryServerInterceptor_UnregisteredAndHandlerAuthorizedRPCs(t *testing.
 		{"unregistered RPC is denied with enforcement on", true, aliceCtx, unregistered, codes.PermissionDenied},
 		{"unregistered RPC is denied without a principal", true, context.Background(), unregistered, codes.PermissionDenied},
 		{"unregistered RPC passes with enforcement off", false, aliceCtx, unregistered, codes.OK},
-		{"RegisterWorker passes with enforcement on", true, context.Background(), ateapipb.WorkerService_RegisterWorker_FullMethodName, codes.OK},
-		{"RequestActorSuspend passes with enforcement on", true, context.Background(), ateapipb.WorkerService_RequestActorSuspend_FullMethodName, codes.OK},
-		{"MintWorkerActorCertificate passes with enforcement on", true, context.Background(), ateapipb.WorkerService_MintWorkerActorCertificate_FullMethodName, codes.OK},
-		{"MintWorkerActorJwt passes with enforcement on", true, context.Background(), ateapipb.WorkerService_MintWorkerActorJwt_FullMethodName, codes.OK},
-		{"RegisterWorker passes with enforcement off", false, context.Background(), ateapipb.WorkerService_RegisterWorker_FullMethodName, codes.OK},
+		{"RegisterWorker passes with enforcement on", true, context.Background(), workerservicepb.WorkerService_RegisterWorker_FullMethodName, codes.OK},
+		{"RequestActorSuspend passes with enforcement on", true, context.Background(), workerservicepb.WorkerService_RequestActorSuspend_FullMethodName, codes.OK},
+		{"MintWorkerActorCertificate passes with enforcement on", true, context.Background(), workerservicepb.WorkerService_MintWorkerActorCertificate_FullMethodName, codes.OK},
+		{"MintWorkerActorJwt passes with enforcement on", true, context.Background(), workerservicepb.WorkerService_MintWorkerActorJwt_FullMethodName, codes.OK},
+		{"RegisterWorker passes with enforcement off", false, context.Background(), workerservicepb.WorkerService_RegisterWorker_FullMethodName, codes.OK},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

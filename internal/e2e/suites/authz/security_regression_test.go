@@ -24,6 +24,7 @@ import (
 	"go.ate.dev/substrate/internal/ateclient"
 	"go.ate.dev/substrate/internal/e2e"
 	"go.ate.dev/substrate/internal/installdefaults"
+	"go.ate.dev/substrate/internal/proto/workerservicepb"
 	"go.ate.dev/substrate/internal/resources"
 	"go.ate.dev/substrate/pkg/proto/ateapipb"
 )
@@ -283,22 +284,23 @@ func testWorkerServiceRequiresAtelet(t *testing.T, ctx context.Context, f *fixtu
 
 	// The worker named is never created: a handler that let the caller
 	// through would answer NotFound, not reject it.
-	worker := &ateapipb.ObjectRef{Name: "authz-missing"}
+	worker := &workerservicepb.ObjectRef{Name: "authz-missing"}
+	actor := &workerservicepb.ObjectRef{Atespace: f.actor.GetAtespace(), Name: f.actor.GetName()}
 	registerWorker := func(ctx context.Context, api *ateclient.Client) error {
-		_, err := api.WorkerService().RegisterWorker(ctx, &ateapipb.RegisterWorkerRequest{Worker: worker})
+		_, err := api.WorkerService().RegisterWorker(ctx, &workerservicepb.RegisterWorkerRequest{Worker: worker})
 		return err
 	}
 	requestSuspend := func(ctx context.Context, api *ateclient.Client) error {
-		_, err := api.WorkerService().RequestActorSuspend(ctx, &ateapipb.RequestActorSuspendRequest{Worker: worker, Actor: f.actor})
+		_, err := api.WorkerService().RequestActorSuspend(ctx, &workerservicepb.RequestActorSuspendRequest{Worker: worker, Actor: actor})
 		return err
 	}
 	// This handler validates the request before authenticating the caller,
 	// so the request must be valid. The CSR is parsed only after
 	// authentication, so it needn't be a real one.
 	mintWorkerCert := func(ctx context.Context, api *ateclient.Client) error {
-		_, err := api.WorkerService().MintWorkerActorCertificate(ctx, &ateapipb.MintWorkerActorCertificateRequest{
+		_, err := api.WorkerService().MintWorkerActorCertificate(ctx, &workerservicepb.MintWorkerActorCertificateRequest{
 			Worker:                    worker,
-			Actor:                     f.actor,
+			Actor:                     actor,
 			ActorUid:                  "00000000-0000-4000-8000-000000000000",
 			CertificateSigningRequest: []byte("not a CSR"),
 		})
@@ -307,18 +309,18 @@ func testWorkerServiceRequiresAtelet(t *testing.T, ctx context.Context, f *fixtu
 	// This handler also validates the request before authenticating the
 	// caller, so the request must be valid.
 	mintWorkerJWT := func(ctx context.Context, api *ateclient.Client) error {
-		_, err := api.WorkerService().MintWorkerActorJwt(ctx, &ateapipb.MintWorkerActorJwtRequest{
-			Actor:     f.actor,
+		_, err := api.WorkerService().MintWorkerActorJwt(ctx, &workerservicepb.MintWorkerActorJwtRequest{
+			Actor:     actor,
 			ActorUid:  "00000000-0000-4000-8000-000000000000",
 			Audiences: []string{"authz-e2e"},
 		})
 		return err
 	}
 	reportSnapshotState := func(ctx context.Context, api *ateclient.Client) error {
-		_, err := api.WorkerService().ReportActorSnapshotState(ctx, &ateapipb.ReportActorSnapshotStateRequest{
-			Actor:    f.actor,
+		_, err := api.WorkerService().ReportActorSnapshotState(ctx, &workerservicepb.ReportActorSnapshotStateRequest{
+			Actor:    actor,
 			ActorUid: "00000000-0000-4000-8000-000000000000",
-			State:    &ateapipb.ActorSnapshotState{},
+			State:    &workerservicepb.ActorSnapshotState{},
 		})
 		return err
 	}

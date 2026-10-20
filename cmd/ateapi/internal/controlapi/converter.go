@@ -16,6 +16,7 @@ package controlapi
 
 import (
 	"go.ate.dev/substrate/internal/proto/ateletpb"
+	"go.ate.dev/substrate/internal/proto/workerservicepb"
 	"go.ate.dev/substrate/pkg/proto/ateapipb"
 )
 
@@ -35,15 +36,30 @@ func fidelityToAtelet(in ateapipb.SnapshotFidelity) ateletpb.SnapshotFidelity {
 	}
 }
 
-// fidelityFromAtelet maps atelet's fidelity enum back onto the identical
-// public one. Anything else comes back UNSPECIFIED.
-func fidelityFromAtelet(in ateletpb.SnapshotFidelity) ateapipb.SnapshotFidelity {
+// fidelityFromAtelet maps atelet's fidelity enum onto the identical
+// WorkerService one. Anything else comes back UNSPECIFIED.
+func fidelityFromAtelet(in ateletpb.SnapshotFidelity) workerservicepb.SnapshotFidelity {
 	switch in {
 	case ateletpb.SnapshotFidelity_SNAPSHOT_FIDELITY_VOLUMES:
-		return ateapipb.SnapshotFidelity_SNAPSHOT_FIDELITY_VOLUMES
+		return workerservicepb.SnapshotFidelity_SNAPSHOT_FIDELITY_VOLUMES
 	case ateletpb.SnapshotFidelity_SNAPSHOT_FIDELITY_ROOTFS:
-		return ateapipb.SnapshotFidelity_SNAPSHOT_FIDELITY_ROOTFS
+		return workerservicepb.SnapshotFidelity_SNAPSHOT_FIDELITY_ROOTFS
 	case ateletpb.SnapshotFidelity_SNAPSHOT_FIDELITY_MEMORY:
+		return workerservicepb.SnapshotFidelity_SNAPSHOT_FIDELITY_MEMORY
+	default:
+		return workerservicepb.SnapshotFidelity_SNAPSHOT_FIDELITY_UNSPECIFIED
+	}
+}
+
+// fidelityFromWorkerService maps WorkerService's fidelity enum onto the
+// identical public one. Anything else comes back UNSPECIFIED.
+func fidelityFromWorkerService(in workerservicepb.SnapshotFidelity) ateapipb.SnapshotFidelity {
+	switch in {
+	case workerservicepb.SnapshotFidelity_SNAPSHOT_FIDELITY_VOLUMES:
+		return ateapipb.SnapshotFidelity_SNAPSHOT_FIDELITY_VOLUMES
+	case workerservicepb.SnapshotFidelity_SNAPSHOT_FIDELITY_ROOTFS:
+		return ateapipb.SnapshotFidelity_SNAPSHOT_FIDELITY_ROOTFS
+	case workerservicepb.SnapshotFidelity_SNAPSHOT_FIDELITY_MEMORY:
 		return ateapipb.SnapshotFidelity_SNAPSHOT_FIDELITY_MEMORY
 	default:
 		return ateapipb.SnapshotFidelity_SNAPSHOT_FIDELITY_UNSPECIFIED
@@ -53,12 +69,12 @@ func fidelityFromAtelet(in ateletpb.SnapshotFidelity) ateapipb.SnapshotFidelity 
 // snapshotReportFromAtelet converts a snapshot atelet reports into the form
 // ReportActorSnapshotState takes, which carries the snapshot's fields inline.
 // A report that names no snapshot converts to nil.
-func snapshotReportFromAtelet(r *ateletpb.SnapshotReport) *ateapipb.SnapshotReport {
+func snapshotReportFromAtelet(r *ateletpb.SnapshotReport) *workerservicepb.SnapshotReport {
 	if r.GetSnapshot() == nil {
 		return nil
 	}
 	snap := r.GetSnapshot()
-	out := &ateapipb.SnapshotReport{
+	out := &workerservicepb.SnapshotReport{
 		Uuid:                snap.GetSnapshotUuid(),
 		Generation:          snap.GetGeneration(),
 		Fidelity:            fidelityFromAtelet(snap.GetFidelity()),
@@ -66,7 +82,7 @@ func snapshotReportFromAtelet(r *ateletpb.SnapshotReport) *ateapipb.SnapshotRepo
 		DurableCompleteTime: r.GetDurableCompleteTime(),
 	}
 	if obj := snap.GetObject(); obj != nil {
-		out.Object = &ateapipb.ObjectSnapshot{SnapshotUri: obj.GetSnapshotUri()}
+		out.Object = &workerservicepb.ObjectSnapshot{SnapshotUri: obj.GetSnapshotUri()}
 	}
 	return out
 }

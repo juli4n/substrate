@@ -22,13 +22,14 @@ import (
 	"go.ate.dev/substrate/cmd/ateapi/internal/store"
 	"go.ate.dev/substrate/internal/localca"
 	"go.ate.dev/substrate/internal/localjwtauthority"
+	"go.ate.dev/substrate/internal/proto/workerservicepb"
 	"go.ate.dev/substrate/internal/resources"
 	"go.ate.dev/substrate/pkg/proto/ateapipb"
 )
 
-// Server implements ateapipb.WorkerServiceServer.
+// Server implements workerservicepb.WorkerServiceServer.
 type Server struct {
-	ateapipb.UnimplementedWorkerServiceServer
+	workerservicepb.UnimplementedWorkerServiceServer
 
 	// store is where a Worker's reports are recorded, and the authoritative
 	// state every request is authorized against.
@@ -55,11 +56,11 @@ type Server struct {
 // drives. *controlapi.RPCService satisfies it.
 type actorControl interface {
 	SuspendActor(ctx context.Context, req *ateapipb.SuspendActorRequest) (*ateapipb.SuspendActorResponse, error)
-	ApplyActorSnapshotState(ctx context.Context, actorRef resources.ActorRef, actorUID, node string, state *ateapipb.ActorSnapshotState) error
+	ApplyActorSnapshotState(ctx context.Context, actorRef resources.ActorRef, actorUID, node string, state *workerservicepb.ActorSnapshotState) error
 	CrashActorReportedByWorker(ctx context.Context, actorRef resources.ActorRef, actorUID, workerName, message string) (*ateapipb.Actor, error)
 }
 
-var _ ateapipb.WorkerServiceServer = (*Server)(nil)
+var _ workerservicepb.WorkerServiceServer = (*Server)(nil)
 
 func New(store store.Interface, control actorControl, ateletSPIFFEID string, actorIDCAPool localca.Pool, actorJWTIssuer string, actorIDJWTPool localjwtauthority.Pool) *Server {
 	return &Server{
@@ -69,5 +70,15 @@ func New(store store.Interface, control actorControl, ateletSPIFFEID string, act
 		actorIDCAPool:  actorIDCAPool,
 		actorJWTIssuer: actorJWTIssuer,
 		actorIDJWTPool: actorIDJWTPool,
+	}
+}
+
+func actorRefFromObjectRef(ref *workerservicepb.ObjectRef) resources.ActorRef {
+	if ref == nil {
+		return resources.ActorRef{}
+	}
+	return resources.ActorRef{
+		Atespace: ref.GetAtespace(),
+		Name:     ref.GetName(),
 	}
 }

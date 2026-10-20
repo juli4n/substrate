@@ -72,21 +72,6 @@ func ValidateDrainWorkerRequest(ctx context.Context, req *ateapipb.DrainWorkerRe
 	return Validate_DrainWorkerRequest(ctx, op, nil, req, nil)
 }
 
-func ValidateRegisterWorkerRequest(ctx context.Context, req *ateapipb.RegisterWorkerRequest) field.ErrorList {
-	op := MakeCreateOp(ctx)
-	return Validate_RegisterWorkerRequest(ctx, op, nil, req, nil)
-}
-
-func ValidateRequestActorSuspendRequest(ctx context.Context, req *ateapipb.RequestActorSuspendRequest) field.ErrorList {
-	op := MakeCreateOp(ctx)
-	return Validate_RequestActorSuspendRequest(ctx, op, nil, req, nil)
-}
-
-func ValidateReportActorCrashedRequest(ctx context.Context, req *ateapipb.ReportActorCrashedRequest) field.ErrorList {
-	op := operation.Operation{Type: operation.Create}
-	return Validate_ReportActorCrashedRequest(ctx, op, nil, req, nil)
-}
-
 func ValidateMarkWorkerAvailableRequest(ctx context.Context, req *ateapipb.MarkWorkerAvailableRequest) field.ErrorList {
 	// Call the generated validation.
 	op := operation.Operation{Type: operation.Create}
@@ -97,17 +82,6 @@ func ValidateMarkWorkerUnavailableRequest(ctx context.Context, req *ateapipb.Mar
 	// Call the generated validation.
 	op := operation.Operation{Type: operation.Create}
 	return Validate_MarkWorkerUnavailableRequest(ctx, op, nil, req, nil)
-}
-
-func ValidateReportActorSnapshotStateRequest(ctx context.Context, req *ateapipb.ReportActorSnapshotStateRequest) field.ErrorList {
-	op := operation.Operation{Type: operation.Create}
-	errs := Validate_ReportActorSnapshotStateRequest(ctx, op, nil, req, nil)
-	// A report with neither latest_local nor uploading is a detach, which
-	// names the snapshot it made durable.
-	if st := req.GetState(); st != nil && st.GetLatestLocal() == nil && st.GetUploading() == nil && st.GetLatestDurable() == nil {
-		errs = append(errs, field.Required(field.NewPath("state", "latest_durable"), "a report with neither latest_local nor uploading must set latest_durable"))
-	}
-	return errs
 }
 
 // validateWorkerUpdate validates a Worker against the previous stored value.

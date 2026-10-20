@@ -1,0 +1,521 @@
+// Copyright 2026 Google LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package workerservice;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "go.ate.dev/substrate/internal/proto/workerservicepb";
+
+// WorkerService is how a Worker tells the control plane what it observes. It is
+// separate from Control because the two have different callers and different
+// authorization: Control is the client-facing API, while these RPCs are served
+// only to an atelet, and only for the Workers on its own node.
+service WorkerService {
+  // RegisterWorker records what a Worker can hold and its supported sandbox
+  // runtimes in one write, so a Worker is never schedulable without runtime
+  // compatibility information to match snapshots against. Capacity and
+  // runtimes are the Worker's to report rather than the control plane's to
+  // infer: they are what the worker can actually supply and expose, only its
+  // node can observe them, and a fleet may run mixed versions.
+  //
+  // atelet calls this with its own client certificate, as it does for
+  // MintCert. Idempotent: re-sending the same capacity and runtimes is not a
+  // write.
+  rpc RegisterWorker(RegisterWorkerRequest) returns (RegisterWorkerResponse);
+
+  // Create a Substrate-issued SPIFFE certificate that asserts a worker acting
+  // on behalf of a particular actor.
+  //
+  // SPIFFE URI: spiffe://${trustdomain}/worker-for-actor/${atespace}/${actor}
+  //
+  // atelet calls this with its own client certificate, as it does for
+  // RequestActorSuspend, naming the Worker its caller proved itself to be.
+  // The control plane mints only for the Worker that the Actor is assigned
+  // to, and only to an atelet on that Worker's node. A request from any
+  // other node or Worker gets NotFound; one from the assigned Worker with a
+  // stale actor_uid gets Aborted. Unlike MintWorkerActorJwt, a paused Actor
+  // gets NotFound, since it has no Worker to bind the certificate to.
+  rpc MintWorkerActorCertificate(MintWorkerActorCertificateRequest) returns (MintWorkerActorCertificateResponse);
+
+  // MintWorkerActorJwt creates a Substrate-issued JWT that asserts a worker
+  // acting on behalf of a particular actor: the JWT counterpart of
+  // MintWorkerActorCertificate. atelet calls it with its own client
+  // certificate and hands the JWT to node-side plugins, which exchange it for
+  // credentials scoped to that actor.
+  //
+  // The token speaks for the worker, not the actor: its subject is
+  // `worker-for-actor/<atespace>/<name>` and its claims sit under
+  // `worker-for-actor.ate.dev`, see MintWorkerActorJwtResponse. The lifetime is
+  // fixed at one hour.
+  rpc MintWorkerActorJwt(MintWorkerActorJwtRequest) returns (MintWorkerActorJwtResponse);
+
+  // RequestActorSuspend asks the control plane to suspend an Actor that the
+  // calling Worker hosts. Only the Worker can observe what makes an Actor
+  // worth reclaiming -- whether its workload still has anything to do -- and
+  // only the control plane can decide whether to act on that.
+  //
+  // This is a request, not a command. It runs the same suspend workflow
+  // Control.SuspendActor runs, behind the same preconditions, so a proposal
+  // that races a resume, pause, or delete loses to it.
+  //
+  // atelet calls this with its own client certificate, as it does for
+  // RegisterWorker, naming the Worker its caller proved itself to be. The
+  // control plane serves it only for an Actor that is assigned to that Worker.
+  //
+  // Not idempotent, unlike Control.SuspendActor, which reports an
+  // already-suspended Actor as the success it is. A suspend releases the
+  // Worker it ran on, so the second request names an Actor the caller no
+  // longer hosts, and is refused as NotFound like any other. A Worker that
+  // retries a suspend it had already been granted therefore sees a failure
+  // rather than a repeat of its success.
+  rpc RequestActorSuspend(RequestActorSuspendRequest) returns (RequestActorSuspendResponse);
+
+  // ReportActorSnapshotState reports an Actor's snapshot state on the caller's
+  // node. The control plane records two facts from it: an upload finished, and
+  // atelet detached the Actor from the node. Only atelet observes either.
+  //
+  // atelet calls this with its own client certificate, for an Actor on its
+  // node. Each report carries the whole state, so repeating one is safe.
+  // Returns ABORTED while another operation is changing the Actor; retry.
+  // Returns NOT_FOUND once the Actor is gone or no longer on the caller's
+  // node. Returns FAILED_PRECONDITION or INVALID_ARGUMENT when the report
+  // conflicts with the record; don't retry.
+  rpc ReportActorSnapshotState(ReportActorSnapshotStateRequest) returns (ReportActorSnapshotStateResponse);
+
+  // ReportActorCrashed tells the control plane that the sandbox of an Actor
+  // the calling Worker hosts died on its own. Nothing else notices: the
+  // control plane only learns of a dead sandbox when an operation on the Actor
+  // fails.
+  //
+  // A RUNNING Actor is moved to ACTOR_STATE_CRASHED and its Worker is
+  // released. An Actor in any other state is left alone and the report is
+  // refused as FailedPrecondition: an operation in flight owns the Actor and
+  // fails on its own if the sandbox is gone. Authorized like
+  // RequestActorSuspend.
+  rpc ReportActorCrashed(ReportActorCrashedRequest) returns (ReportActorCrashedResponse);
+}
+
+// ObjectRef references a Substrate resource by its atespace and name.
+message ObjectRef {
+  // The atespace of the referenced resource. Empty if the target resource is
+  // global-scoped.
+  //
+  // References to atespaced resources should add `+k8s:subfield(atespace)=+k8s:required`
+  // References to non-atespaced resources should add `+k8s:subfield(atespace)=+k8s:forbidden`
+  // +k8s:optional
+  // +k8s:format=k8s-short-name
+  string atespace = 1;
+
+  // The name of the referenced resource.
+  //
+  // +k8s:required
+  // +k8s:format=k8s-short-name
+  string name = 2;
+}
+
+message RegisterWorkerRequest {
+  // The Worker being registered. atespace is always empty; Workers are
+  // global-scoped.
+  //
+  // +k8s:required
+  // +k8s:beta(since: "0.0")=+k8s:subfield(atespace)=+k8s:forbidden # TODO: get rid of beta prefix
+  ObjectRef worker = 1;
+
+  // Everything the Worker can hold. This replaces what is recorded rather than
+  // merging into it: a dimension left out is one the Worker no longer supplies,
+  // and an Actor asking for that dimension will not be placed here.
+  //
+  // +k8s:required
+  WorkerResources capacity = 2;
+
+  // Runtime that new and cold-booted actors start under.
+  // Snapshots matching default_runtime can also warm-boot on this worker.
+  // Like capacity, this replaces what is recorded on the Worker.
+  //
+  // +k8s:required
+  SandboxRuntime default_runtime = 3;
+
+  // Additional runtimes (excluding default_runtime) that this worker can
+  // restore snapshots from right now.
+  //
+  // +k8s:optional
+  // +k8s:maxItems=32
+  // +k8s:listType=atomic
+  repeated SandboxRuntime restorable_runtimes = 4;
+}
+
+message RegisterWorkerResponse {}
+
+// SandboxRuntime describes a sandbox runtime and its compatibility identity as
+// reported by a Worker.
+message SandboxRuntime {
+  // e.g. "gvisor", "microvm"
+  //
+  // +k8s:required
+  // +k8s:maxLength=63
+  // +k8s:customValidation # gvisor or microvm
+  string sandbox_class = 1;
+
+  // Primary compatibility version stamped onto an actor's snapshot when a
+  // checkpoint is taken on this runtime. Snapshots matching `version`
+  // can warm-boot on this runtime.
+  // TODO: Add support for additional compatibility versions.
+  //
+  // +k8s:required
+  VersionedSandboxCompat version = 2;
+
+  // TODO: Add an informational SandboxConfig version name (e.g. "gvisor-2")
+  // once workers report one.
+}
+
+// VersionedSandboxCompat holds the compatibility schema version and the
+// key-value compatibility attributes for a SandboxRuntime.
+message VersionedSandboxCompat {
+  // Compatibility schema version (e.g. "v1") defining which runtime and
+  // hardware attributes are recorded and how they are computed.
+  //
+  // +k8s:required
+  // +k8s:maxLength=64
+  string schema_version = 1;
+
+  // Key-value compatibility attributes defined by this schema version, covering
+  // both runtime assets (e.g. "sandbox_bundle_hash") and effective guest
+  // hardware features after masking (e.g. "architecture", "cpu_features").
+  // Matched against a snapshot under the same schema_version: every attribute
+  // on the snapshot must be present on the worker with an equal value (except
+  // "cpu_features", where the snapshot's hexadecimal bitmask must be a bitwise
+  // subset of the worker's); keys only the worker has are ignored, so a worker
+  // can gain keys under one schema_version without invalidating older
+  // snapshots. Removing or recomputing a key is a new schema_version, under
+  // which older snapshots no longer match.
+  // Order as sent does not matter: ate-api-server sorts attributes by key
+  // before recording them.
+  //
+  // +k8s:required
+  // +k8s:maxItems=32
+  // +k8s:listType=map
+  // +k8s:listMapKey=key
+  repeated AttributeEntry attributes = 2;
+}
+
+// AttributeEntry is a single key-value compatibility attribute.
+message AttributeEntry {
+  // Attribute name (e.g. "architecture", "cpu_features", "sandbox_bundle_hash").
+  //
+  // +k8s:required
+  // +k8s:maxLength=128
+  string key = 1;
+
+  // Attribute value corresponding to key.
+  //
+  // +k8s:required
+  // +k8s:maxLength=256
+  string value = 2;
+}
+
+// WorkerResources represents a set of resources a Worker can supply.
+message WorkerResources {
+  // cpu_millicores is CPU in millicores (1000 = one core). Compared against
+  // the Actor's resource limits for placement.
+  //
+  // +k8s:optional
+  // +k8s:minimum=0
+  // +k8s:maximum=999999 # less than 1000 cores
+  int64 cpu_millicores = 1;
+
+  // memory_bytes is memory in bytes. Compared against the Actor's resource
+  // limits for placement.
+  //
+  // +k8s:optional
+  // +k8s:minimum=0
+  int64 memory_bytes = 2;
+
+  // A count of Actors. Workers can use this to limit the number of Actors
+  // that can be placed on them, constraining the costs of other things that
+  // are not captured in the resources above, but which still have costs -
+  // netns, mounts, file descriptors, etc.
+  //
+  // +k8s:optional
+  // +k8s:minimum=1
+  int32 actors = 3;
+}
+
+// Request message for MintWorkerActorCertificate.
+message MintWorkerActorCertificateRequest {
+  // The actor for which the certificate should be issued.
+  //
+  // Must be a valid actor that currently exists according to the actor store.
+  //
+  // +k8s:required
+  // +k8s:subfield(atespace)=+k8s:required
+  ObjectRef actor = 1;
+
+  // The UID of the actor --- used to guard against deletion and recreation of
+  // an actor with the same name.
+  //
+  // +k8s:required
+  // +k8s:format=k8s-uuid
+  string actor_uid = 2;
+
+  // Request contains DER encoded bytes of a x509 certificate signing request.
+  // The signer will ignore the contents of the CSR except to extract the
+  // subject public key.
+  //
+  // +k8s:required
+  // +k8s:maxBytes=16384
+  bytes certificate_signing_request = 3;
+
+  // The Worker requesting the certificate. atespace is always empty; Workers
+  // are global-scoped. atelet fills this in from its caller's certificate, so
+  // it names the Worker that certificate proves the request came from. It
+  // must be the Worker that the actor is assigned to.
+  //
+  // +k8s:required
+  // +k8s:beta(since: "0.0")=+k8s:subfield(atespace)=+k8s:forbidden # TODO: get rid of beta prefix
+  ObjectRef worker = 4;
+}
+
+// Response message for MintWorkerActorCertificate.
+message MintWorkerActorCertificateResponse {
+  // Response contains a list of DER encoded certificates. The first entry is the
+  // leaf certificate, and any remaining entries are intermediates in
+  // leaf-to-root order.
+  repeated bytes actor_certificates = 1;
+}
+
+// Request message for MintWorkerActorJwt.
+message MintWorkerActorJwtRequest {
+  // The actor for which the JWT should be issued.
+  //
+  // Must be a valid actor that currently exists according to the actor store.
+  //
+  // +k8s:required
+  // +k8s:subfield(atespace)=+k8s:required
+  ObjectRef actor = 1;
+
+  // The UID of the actor --- used to guard against deletion and recreation of
+  // an actor with the same name.
+  //
+  // +k8s:required
+  // +k8s:format=k8s-uuid
+  string actor_uid = 2;
+
+  // The audiences the minted JWT is bound to. Tokens are only issued with
+  // audience bindings, so at least one is required.
+  //
+  // +k8s:required
+  // +k8s:maxItems=16 # guardrail; tokens realistically bind a handful of audiences
+  // +k8s:listType=set
+  // +k8s:eachVal=+k8s:minLength=1
+  // +k8s:eachVal=+k8s:maxLength=512 # audiences are caller-defined URIs; bound only
+  repeated string audiences = 3;
+}
+
+// Response message for MintWorkerActorJwt.
+message MintWorkerActorJwtResponse {
+  // The signed JWT. Its claims are those described on
+  // MintActorJwtResponse.actor_jwt, except that it speaks for a worker
+  // acting on behalf of the actor rather than for the actor itself:
+  //
+  // * sub: `worker-for-actor/<atespace>/<name>`.
+  // * `worker-for-actor.ate.dev`: A JSON object with the actor's `atespace`,
+  //   `actorName`, and `actorUID`, and the `node` the token was minted for,
+  //   the one hosting the actor at that moment. A relying party refuses the
+  //   token once the actor has left that node.
+  //
+  // A relying party that trusts actor JWTs must not accept this token as the
+  // actor, and vice versa.
+  string actor_jwt = 1 [ debug_redact = true ];
+
+  // expire_time is when actor_jwt expires. Equal to its exp claim.
+  google.protobuf.Timestamp expire_time = 2;
+}
+
+// TODO: add a durability mode, carried through atelet's
+// RequestActorSuspendRequest, so the Worker can choose how the snapshot is
+// made durable. Until then the suspend uses SuspendActor's default mode.
+message RequestActorSuspendRequest {
+  // The Worker making the request. atespace is always empty; Workers are
+  // global-scoped. atelet fills this in from its caller's certificate, so it
+  // names the Worker that certificate proves the request came from.
+  //
+  // +k8s:required
+  // +k8s:beta(since: "0.0")=+k8s:subfield(atespace)=+k8s:forbidden # TODO: get rid of beta prefix
+  ObjectRef worker = 1;
+
+  // The Actor to suspend. It must be assigned to worker; a Worker may speak
+  // only for what it hosts.
+  //
+  // +k8s:required
+  // +k8s:subfield(atespace)=+k8s:required
+  ObjectRef actor = 2;
+
+  // The UID of the Actor the Worker believes it is hosting, which pins the
+  // request to one incarnation. Without it a request could outlive the Actor
+  // it was made about and suspend the recreation that took its name.
+  //
+  // +k8s:required
+  // +k8s:format=k8s-uuid
+  string actor_uid = 3;
+}
+
+message RequestActorSuspendResponse {}
+
+message ReportActorCrashedRequest {
+  // The Worker making the report. atespace is always empty; Workers are
+  // global-scoped. atelet fills this in from its caller's certificate.
+  //
+  // +k8s:required
+  // +k8s:beta(since: "0.0")=+k8s:subfield(atespace)=+k8s:forbidden # TODO: get rid of beta prefix
+  ObjectRef worker = 1;
+
+  // The Actor whose sandbox died. It must be assigned to worker.
+  //
+  // +k8s:required
+  // +k8s:subfield(atespace)=+k8s:required
+  ObjectRef actor = 2;
+
+  // The UID of the Actor the Worker believes it is hosting, as for
+  // RequestActorSuspend.
+  //
+  // +k8s:required
+  // +k8s:format=k8s-uuid
+  string actor_uid = 3;
+
+  // What the Worker saw, recorded in the Actor's crash message.
+  //
+  // +k8s:required
+  // +k8s:maxLength=4096
+  string message = 4;
+}
+
+message ReportActorCrashedResponse {}
+
+message ReportActorSnapshotStateRequest {
+  // The Actor the report is about.
+  //
+  // +k8s:required
+  // +k8s:subfield(atespace)=+k8s:required
+  ObjectRef actor = 1;
+
+  // The UID of the Actor atelet holds snapshots for, which pins the report to
+  // one incarnation, as on RequestActorSuspendRequest.
+  //
+  // +k8s:required
+  // +k8s:format=k8s-uuid
+  string actor_uid = 2;
+
+  // +k8s:required
+  ActorSnapshotState state = 3;
+}
+
+message ReportActorSnapshotStateResponse {}
+
+// ActorSnapshotState is what atelet holds for one Actor on its node. It
+// mirrors atelet's ActorSnapshotState, flattened: atelet's SnapshotReport
+// nests its own Snapshot message, which this API's Snapshot is not.
+message ActorSnapshotState {
+  // The snapshot atelet restores the Actor from locally. Unset once a detach
+  // has made the snapshot durable and begun deleting it; latest_durable is
+  // then the Actor's latest snapshot.
+  //
+  // +k8s:optional
+  SnapshotReport latest_local = 1;
+
+  // The snapshot an in-flight upload is reading, if any.
+  //
+  // +k8s:optional
+  SnapshotReport uploading = 2;
+
+  // The newest snapshot atelet knows is durable, whether or not the control
+  // plane has recorded it. Unset says nothing about older durable snapshots.
+  //
+  // +k8s:optional
+  SnapshotReport latest_durable = 3;
+
+  // When atelet next plans to upload latest_local. Advisory: a promote or
+  // detach can upload it sooner.
+  //
+  // +k8s:optional
+  google.protobuf.Timestamp upload_due_time = 4;
+}
+
+// SnapshotReport is one of an Actor's snapshots, named by the uuid and
+// generation the control plane gave it.
+message SnapshotReport {
+  // Snapshot.uuid.
+  //
+  // +k8s:required
+  // +k8s:format=k8s-short-name
+  string uuid = 1;
+
+  // Snapshot.generation.
+  //
+  // +k8s:required
+  // +k8s:minimum=1
+  int32 generation = 2;
+
+  // The fidelity the snapshot holds, read from its manifest.
+  //
+  // +k8s:required
+  // +k8s:minimum=1
+  // +k8s:maximum=3 # keep this in sync with the SnapshotFidelity enum
+  SnapshotFidelity fidelity = 3;
+
+  // Where the snapshot's durable copy is, or will be, uploaded.
+  //
+  // +k8s:required
+  ObjectSnapshot object = 4;
+
+  // When the checkpoint that produced the snapshot committed on the node.
+  // Unset when this atelet did not take it, as for a snapshot it restored
+  // from object storage.
+  //
+  // +k8s:optional
+  google.protobuf.Timestamp local_commit_time = 5;
+
+  // When the snapshot's manifest was written to object storage. Set only in
+  // latest_durable, and only when this atelet wrote it.
+  //
+  // +k8s:optional
+  google.protobuf.Timestamp durable_complete_time = 6;
+}
+
+// SnapshotFidelity orders the state layers a snapshot can hold, lowest to
+// highest. Each level includes the ones below it.
+enum SnapshotFidelity {
+  SNAPSHOT_FIDELITY_UNSPECIFIED = 0;
+  // Durable volumes only. The actor resumes by cold-booting its containers
+  // from the OCI image with the volumes restored.
+  SNAPSHOT_FIDELITY_VOLUMES = 1;
+  // Volumes plus the root filesystem changes made since boot. The actor
+  // cold-boots on resume with its rootfs writes back in place.
+  SNAPSHOT_FIDELITY_ROOTFS = 2;
+  // Volumes, root filesystem changes, and process memory. The actor resumes
+  // where it left off.
+  SNAPSHOT_FIDELITY_MEMORY = 3;
+  // Keep this in sync with the maximums on fields of this type.
+}
+
+// ObjectSnapshot addresses a snapshot held in object storage.
+message ObjectSnapshot {
+  // snapshot_uri addresses the snapshot's prefix in object storage.
+  //
+  // +k8s:required
+  // +k8s:maxLength=2048 # the template's storage_location bound plus the owner prefix and snapshot name
+  string snapshot_uri = 1;
+}

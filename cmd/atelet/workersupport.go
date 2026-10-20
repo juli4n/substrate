@@ -22,6 +22,7 @@ import (
 
 	"go.ate.dev/substrate/cmd/atelet/internal/apivalidation"
 	"go.ate.dev/substrate/internal/proto/ateletpb"
+	"go.ate.dev/substrate/internal/proto/workerservicepb"
 	"go.ate.dev/substrate/internal/resources"
 	"go.ate.dev/substrate/internal/substratex509"
 	"go.ate.dev/substrate/pkg/proto/ateapipb"
@@ -33,7 +34,7 @@ import (
 
 type workerSupportServer struct {
 	ateletpb.UnimplementedWorkerSupportServer
-	workers ateapipb.WorkerServiceClient
+	workers workerservicepb.WorkerServiceClient
 	control ateapipb.ControlClient
 }
 
@@ -52,10 +53,10 @@ func (b *workerSupportServer) MintActorCertificate(ctx context.Context, req *ate
 		return nil, resources.ToGRPCStatusError(errs)
 	}
 
-	resp, err := b.workers.MintWorkerActorCertificate(ctx, &ateapipb.MintWorkerActorCertificateRequest{
+	resp, err := b.workers.MintWorkerActorCertificate(ctx, &workerservicepb.MintWorkerActorCertificateRequest{
 		// Workers are global-scoped and named by their pod UID.
-		Worker: &ateapipb.ObjectRef{Name: workerIdentity.PodUID},
-		Actor: &ateapipb.ObjectRef{
+		Worker: &workerservicepb.ObjectRef{Name: workerIdentity.PodUID},
+		Actor: &workerservicepb.ObjectRef{
 			Atespace: req.GetActorAtespace(),
 			Name:     req.GetActorName(),
 		},
@@ -123,9 +124,9 @@ func (s *workerSupportServer) RegisterWorker(ctx context.Context, req *ateletpb.
 	if errs := apivalidation.ValidateRegisterWorkerRequest(ctx, req); len(errs) > 0 {
 		return nil, resources.ToGRPCStatusError(errs)
 	}
-	if _, err := s.workers.RegisterWorker(ctx, &ateapipb.RegisterWorkerRequest{
+	if _, err := s.workers.RegisterWorker(ctx, &workerservicepb.RegisterWorkerRequest{
 		// Workers are global-scoped and named by their pod UID.
-		Worker:             &ateapipb.ObjectRef{Name: workerIdentity.PodUID},
+		Worker:             &workerservicepb.ObjectRef{Name: workerIdentity.PodUID},
 		Capacity:           toWorkerResources(req.GetCapacity()),
 		DefaultRuntime:     toAteAPISandboxRuntime(req.GetDefaultRuntime()),
 		RestorableRuntimes: toAteAPISandboxRuntimes(req.GetRestorableRuntimes()),
@@ -142,11 +143,11 @@ func (s *workerSupportServer) RegisterWorker(ctx context.Context, req *ateletpb.
 
 // toWorkerResources converts atelet's WorkerResources to the control plane's,
 // which it mirrors field for field.
-func toWorkerResources(in *ateletpb.WorkerResources) *ateapipb.WorkerResources {
+func toWorkerResources(in *ateletpb.WorkerResources) *workerservicepb.WorkerResources {
 	if in == nil {
 		return nil
 	}
-	return &ateapipb.WorkerResources{
+	return &workerservicepb.WorkerResources{
 		CpuMillicores: in.GetCpuMillicores(),
 		MemoryBytes:   in.GetMemoryBytes(),
 		Actors:        in.GetActors(),
@@ -155,25 +156,25 @@ func toWorkerResources(in *ateletpb.WorkerResources) *ateapipb.WorkerResources {
 
 // toAteAPISandboxRuntime converts atelet's SandboxRuntime to the control
 // plane's, which it mirrors field for field.
-func toAteAPISandboxRuntime(in *ateletpb.SandboxRuntime) *ateapipb.SandboxRuntime {
+func toAteAPISandboxRuntime(in *ateletpb.SandboxRuntime) *workerservicepb.SandboxRuntime {
 	if in == nil {
 		return nil
 	}
-	out := &ateapipb.SandboxRuntime{SandboxClass: in.GetSandboxClass()}
+	out := &workerservicepb.SandboxRuntime{SandboxClass: in.GetSandboxClass()}
 	if v := in.GetVersion(); v != nil {
-		out.Version = &ateapipb.VersionedSandboxCompat{SchemaVersion: v.GetSchemaVersion()}
+		out.Version = &workerservicepb.VersionedSandboxCompat{SchemaVersion: v.GetSchemaVersion()}
 		for _, a := range v.GetAttributes() {
-			out.Version.Attributes = append(out.Version.Attributes, &ateapipb.AttributeEntry{Key: a.GetKey(), Value: a.GetValue()})
+			out.Version.Attributes = append(out.Version.Attributes, &workerservicepb.AttributeEntry{Key: a.GetKey(), Value: a.GetValue()})
 		}
 	}
 	return out
 }
 
-func toAteAPISandboxRuntimes(in []*ateletpb.SandboxRuntime) []*ateapipb.SandboxRuntime {
+func toAteAPISandboxRuntimes(in []*ateletpb.SandboxRuntime) []*workerservicepb.SandboxRuntime {
 	if in == nil {
 		return nil
 	}
-	out := make([]*ateapipb.SandboxRuntime, 0, len(in))
+	out := make([]*workerservicepb.SandboxRuntime, 0, len(in))
 	for _, r := range in {
 		out = append(out, toAteAPISandboxRuntime(r))
 	}
@@ -203,10 +204,10 @@ func (s *workerSupportServer) RequestActorSuspend(ctx context.Context, req *atel
 	if errs := apivalidation.ValidateRequestActorSuspendRequest(ctx, req); len(errs) > 0 {
 		return nil, resources.ToGRPCStatusError(errs)
 	}
-	if _, err := s.workers.RequestActorSuspend(ctx, &ateapipb.RequestActorSuspendRequest{
+	if _, err := s.workers.RequestActorSuspend(ctx, &workerservicepb.RequestActorSuspendRequest{
 		// Workers are global-scoped and named by their pod UID.
-		Worker: &ateapipb.ObjectRef{Name: workerIdentity.PodUID},
-		Actor: &ateapipb.ObjectRef{
+		Worker: &workerservicepb.ObjectRef{Name: workerIdentity.PodUID},
+		Actor: &workerservicepb.ObjectRef{
 			Atespace: req.GetActorAtespace(),
 			Name:     req.GetActorName(),
 		},
@@ -277,9 +278,9 @@ func (s *workerSupportServer) ReportActorCrashed(ctx context.Context, req *atele
 	if errs := apivalidation.ValidateReportActorCrashedRequest(ctx, req); len(errs) > 0 {
 		return nil, resources.ToGRPCStatusError(errs)
 	}
-	if _, err := s.workers.ReportActorCrashed(ctx, &ateapipb.ReportActorCrashedRequest{
-		Worker: &ateapipb.ObjectRef{Name: workerIdentity.PodUID},
-		Actor: &ateapipb.ObjectRef{
+	if _, err := s.workers.ReportActorCrashed(ctx, &workerservicepb.ReportActorCrashedRequest{
+		Worker: &workerservicepb.ObjectRef{Name: workerIdentity.PodUID},
+		Actor: &workerservicepb.ObjectRef{
 			Atespace: req.GetActorAtespace(),
 			Name:     req.GetActorName(),
 		},

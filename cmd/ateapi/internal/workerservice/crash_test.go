@@ -25,14 +25,15 @@ import (
 	"go.ate.dev/substrate/cmd/ateapi/internal/ateletauth/ateletauthtest"
 	"go.ate.dev/substrate/cmd/ateapi/internal/store/storetest"
 	"go.ate.dev/substrate/internal/apierror"
+	"go.ate.dev/substrate/internal/proto/workerservicepb"
 	"go.ate.dev/substrate/internal/resources"
 	"go.ate.dev/substrate/pkg/proto/ateapipb"
 )
 
-func crashRequest(actorUID string) *ateapipb.ReportActorCrashedRequest {
-	return &ateapipb.ReportActorCrashedRequest{
-		Worker:   &ateapipb.ObjectRef{Name: testWorkerName},
-		Actor:    &ateapipb.ObjectRef{Atespace: suspendAtespace, Name: suspendActor},
+func crashRequest(actorUID string) *workerservicepb.ReportActorCrashedRequest {
+	return &workerservicepb.ReportActorCrashedRequest{
+		Worker:   &workerservicepb.ObjectRef{Name: testWorkerName},
+		Actor:    &workerservicepb.ObjectRef{Atespace: suspendAtespace, Name: suspendActor},
 		ActorUid: actorUID,
 		Message:  "cloud-hypervisor exited: signal: killed",
 	}
@@ -77,7 +78,7 @@ func TestReportActorCrashed_Refused(t *testing.T) {
 	tests := []struct {
 		name string
 		ctx  context.Context
-		req  *ateapipb.ReportActorCrashedRequest
+		req  *workerservicepb.ReportActorCrashedRequest
 		want codes.Code
 	}{
 		{"unauthenticated", ateletauthtest.ContextWith(nil), crashRequest(uid), codes.Unauthenticated},

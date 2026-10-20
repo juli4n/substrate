@@ -29,6 +29,7 @@ import (
 	"go.ate.dev/substrate/internal/actoridjwt"
 	"go.ate.dev/substrate/internal/apierror"
 	"go.ate.dev/substrate/internal/localjwtauthority"
+	"go.ate.dev/substrate/internal/proto/workerservicepb"
 	"go.ate.dev/substrate/pkg/proto/ateapipb"
 	"google.golang.org/grpc/codes"
 )
@@ -69,8 +70,8 @@ func TestMintWorkerActorJwt(t *testing.T) {
 
 	ctx := ateletauthtest.ContextWith(ateletauthtest.CertOn(t, "node-1"))
 	before := time.Now().Truncate(time.Second)
-	resp, err := s.MintWorkerActorJwt(ctx, &ateapipb.MintWorkerActorJwtRequest{
-		Actor:     &ateapipb.ObjectRef{Atespace: "team-a", Name: "my-actor"},
+	resp, err := s.MintWorkerActorJwt(ctx, &workerservicepb.MintWorkerActorJwtRequest{
+		Actor:     &workerservicepb.ObjectRef{Atespace: "team-a", Name: "my-actor"},
 		ActorUid:  actor.GetMetadata().GetUid(),
 		Audiences: []string{"snapshot-plugin"},
 	})
@@ -142,9 +143,9 @@ func TestMintWorkerActorJwt_Errors(t *testing.T) {
 	s := New(st, &fakeControl{}, testAteletSPIFFEID, nil, testActorJWTIssuer, newTestJWTPool(t))
 	authed := ateletauthtest.ContextWith(ateletauthtest.CertOn(t, "node-1"))
 
-	valid := func() *ateapipb.MintWorkerActorJwtRequest {
-		return &ateapipb.MintWorkerActorJwtRequest{
-			Actor:     &ateapipb.ObjectRef{Atespace: "team-a", Name: "my-actor"},
+	valid := func() *workerservicepb.MintWorkerActorJwtRequest {
+		return &workerservicepb.MintWorkerActorJwtRequest{
+			Actor:     &workerservicepb.ObjectRef{Atespace: "team-a", Name: "my-actor"},
 			ActorUid:  actor.GetMetadata().GetUid(),
 			Audiences: []string{"snapshot-plugin"},
 		}
@@ -168,7 +169,7 @@ func TestMintWorkerActorJwt_Errors(t *testing.T) {
 	tests := []struct {
 		name   string
 		ctx    context.Context
-		mutate func(*ateapipb.MintWorkerActorJwtRequest)
+		mutate func(*workerservicepb.MintWorkerActorJwtRequest)
 		// status, when set, replaces the actor's status for the case.
 		status *ateapipb.ActorStatus
 		// assignments, when set, replaces the store's worker assignments
@@ -292,25 +293,25 @@ func TestMintWorkerActorJwt_Errors(t *testing.T) {
 		{
 			name:   "missing actor",
 			ctx:    authed,
-			mutate: func(r *ateapipb.MintWorkerActorJwtRequest) { r.Actor = nil },
+			mutate: func(r *workerservicepb.MintWorkerActorJwtRequest) { r.Actor = nil },
 			want:   codes.InvalidArgument,
 		},
 		{
 			name:   "missing actor uid",
 			ctx:    authed,
-			mutate: func(r *ateapipb.MintWorkerActorJwtRequest) { r.ActorUid = "" },
+			mutate: func(r *workerservicepb.MintWorkerActorJwtRequest) { r.ActorUid = "" },
 			want:   codes.InvalidArgument,
 		},
 		{
 			name:   "missing audiences",
 			ctx:    authed,
-			mutate: func(r *ateapipb.MintWorkerActorJwtRequest) { r.Audiences = nil },
+			mutate: func(r *workerservicepb.MintWorkerActorJwtRequest) { r.Audiences = nil },
 			want:   codes.InvalidArgument,
 		},
 		{
 			name:   "empty audience",
 			ctx:    authed,
-			mutate: func(r *ateapipb.MintWorkerActorJwtRequest) { r.Audiences = []string{""} },
+			mutate: func(r *workerservicepb.MintWorkerActorJwtRequest) { r.Audiences = []string{""} },
 			want:   codes.InvalidArgument,
 		},
 		{
@@ -322,10 +323,12 @@ func TestMintWorkerActorJwt_Errors(t *testing.T) {
 		{
 			// A foreign node must not learn that the actor exists from the UID
 			// check answering Aborted: the node check runs first.
-			name:   "actor hosted on another node, stale uid",
-			ctx:    ateletauthtest.ContextWith(ateletauthtest.CertOn(t, "node-2")),
-			mutate: func(r *ateapipb.MintWorkerActorJwtRequest) { r.ActorUid = "7d1c0b2a-9e4f-4c3d-8a6b-5f2e1d0c9b8a" },
-			want:   codes.NotFound,
+			name: "actor hosted on another node, stale uid",
+			ctx:  ateletauthtest.ContextWith(ateletauthtest.CertOn(t, "node-2")),
+			mutate: func(r *workerservicepb.MintWorkerActorJwtRequest) {
+				r.ActorUid = "7d1c0b2a-9e4f-4c3d-8a6b-5f2e1d0c9b8a"
+			},
+			want: codes.NotFound,
 		},
 		{
 			name:   "paused actor on this node",
@@ -408,16 +411,18 @@ func TestMintWorkerActorJwt_Errors(t *testing.T) {
 		{
 			name:   "actor not found",
 			ctx:    authed,
-			mutate: func(r *ateapipb.MintWorkerActorJwtRequest) { r.Actor.Name = "nonexistent" },
+			mutate: func(r *workerservicepb.MintWorkerActorJwtRequest) { r.Actor.Name = "nonexistent" },
 			want:   codes.NotFound,
 		},
 		{
 			// A recreated actor has a new UID, and a token must not be minted
 			// for the old incarnation. Aborted, as MintWorkerActorCertificate answers.
-			name:   "stale actor uid",
-			ctx:    authed,
-			mutate: func(r *ateapipb.MintWorkerActorJwtRequest) { r.ActorUid = "7d1c0b2a-9e4f-4c3d-8a6b-5f2e1d0c9b8a" },
-			want:   codes.Aborted,
+			name: "stale actor uid",
+			ctx:  authed,
+			mutate: func(r *workerservicepb.MintWorkerActorJwtRequest) {
+				r.ActorUid = "7d1c0b2a-9e4f-4c3d-8a6b-5f2e1d0c9b8a"
+			},
+			want: codes.Aborted,
 		},
 	}
 	hostedStatus := actor.GetStatus()
@@ -458,7 +463,7 @@ func TestNodeRefusalLogNamesCredential(t *testing.T) {
 	s := New(st, &fakeControl{}, testAteletSPIFFEID, newTestCAPool(t), testActorJWTIssuer, newTestJWTPool(t))
 	// The actor's worker runs on node-1.
 	otherNode := ateletauthtest.ContextWith(ateletauthtest.CertOn(t, "node-2"))
-	actorRef := &ateapipb.ObjectRef{Atespace: "team-a", Name: "my-actor"}
+	actorRef := &workerservicepb.ObjectRef{Atespace: "team-a", Name: "my-actor"}
 
 	tests := []struct {
 		name string
@@ -468,7 +473,7 @@ func TestNodeRefusalLogNamesCredential(t *testing.T) {
 		{
 			name: "MintWorkerActorJwt",
 			mint: func() error {
-				_, err := s.MintWorkerActorJwt(otherNode, &ateapipb.MintWorkerActorJwtRequest{
+				_, err := s.MintWorkerActorJwt(otherNode, &workerservicepb.MintWorkerActorJwtRequest{
 					Actor:     actorRef,
 					ActorUid:  actor.GetMetadata().GetUid(),
 					Audiences: []string{"snapshot-plugin"},
@@ -480,11 +485,11 @@ func TestNodeRefusalLogNamesCredential(t *testing.T) {
 		{
 			name: "MintWorkerActorCertificate",
 			mint: func() error {
-				_, err := s.MintWorkerActorCertificate(otherNode, &ateapipb.MintWorkerActorCertificateRequest{
+				_, err := s.MintWorkerActorCertificate(otherNode, &workerservicepb.MintWorkerActorCertificateRequest{
 					Actor:                     actorRef,
 					ActorUid:                  actor.GetMetadata().GetUid(),
 					CertificateSigningRequest: csr,
-					Worker:                    &ateapipb.ObjectRef{Name: "worker-1"},
+					Worker:                    &workerservicepb.ObjectRef{Name: "worker-1"},
 				})
 				return err
 			},

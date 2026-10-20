@@ -27,6 +27,7 @@ import (
 	"go.ate.dev/substrate/internal/clustertrustbundle"
 	"go.ate.dev/substrate/internal/installdefaults"
 	"go.ate.dev/substrate/internal/portforward"
+	"go.ate.dev/substrate/internal/proto/workerservicepb"
 	"go.ate.dev/substrate/pkg/proto/ateapipb"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"go.opentelemetry.io/otel"
@@ -136,8 +137,8 @@ func (c *Client) Close() {
 // WorkerService returns a WorkerService client on the same connection. Only
 // atelet is permitted to call WorkerService; this exists so tests can check
 // that other callers are rejected.
-func (c *Client) WorkerService() ateapipb.WorkerServiceClient {
-	return ateapipb.NewWorkerServiceClient(c.conn)
+func (c *Client) WorkerService() workerservicepb.WorkerServiceClient {
+	return workerservicepb.NewWorkerServiceClient(c.conn)
 }
 
 // NewClient creates a new Ate API client. If endpoint is empty, it automatically

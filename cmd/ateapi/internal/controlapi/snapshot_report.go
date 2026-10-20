@@ -25,13 +25,14 @@ import (
 	"go.ate.dev/substrate/internal/apierror"
 	"go.ate.dev/substrate/internal/preview"
 	"go.ate.dev/substrate/internal/proto/ateletpb"
+	"go.ate.dev/substrate/internal/proto/workerservicepb"
 	"go.ate.dev/substrate/internal/resources"
 	"go.ate.dev/substrate/pkg/proto/ateapipb"
 )
 
 // ApplyActorSnapshotState records the snapshot state that the atelet on node
 // reports for the Actor. The caller has authenticated that atelet.
-func (s *RPCService) ApplyActorSnapshotState(ctx context.Context, actorRef resources.ActorRef, actorUID, node string, state *ateapipb.ActorSnapshotState) error {
+func (s *RPCService) ApplyActorSnapshotState(ctx context.Context, actorRef resources.ActorRef, actorUID, node string, state *workerservicepb.ActorSnapshotState) error {
 	setSpanActorRefAttributes(ctx, actorRef)
 	return s.actorWorkflow.ApplyReportedSnapshotState(ctx, actorRef, actorUID, node, state)
 }
@@ -40,7 +41,7 @@ func (s *RPCService) ApplyActorSnapshotState(ctx context.Context, actorRef resou
 // Actor. It holds the Actor's lease and applies reports only to a SUSPENDED or
 // RUNNING Actor, so a report never interleaves with a workflow. A report that
 // changes nothing writes nothing.
-func (w *ActorWorkflow) ApplyReportedSnapshotState(ctx context.Context, actorRef resources.ActorRef, actorUID, node string, state *ateapipb.ActorSnapshotState) error {
+func (w *ActorWorkflow) ApplyReportedSnapshotState(ctx context.Context, actorRef resources.ActorRef, actorUID, node string, state *workerservicepb.ActorSnapshotState) error {
 	ctx = preview.ContextWithOptIn(ctx)
 	// Check before taking the lease, so an atelet can't hold the lease of an
 	// Actor that isn't on its node. Check again under the lease.
@@ -143,7 +144,7 @@ const (
 // applyActorSnapshotState applies the two facts a report carries: an upload
 // finished, and the atelet on node detached the Actor. A report with neither
 // latest_local nor uploading is a detach.
-func applyActorSnapshotState(ctx context.Context, status *ateapipb.ActorStatus, node string, state *ateapipb.ActorSnapshotState) error {
+func applyActorSnapshotState(ctx context.Context, status *ateapipb.ActorStatus, node string, state *workerservicepb.ActorSnapshotState) error {
 	if err := applyLatestDurable(ctx, status, state.GetLatestDurable()); err != nil {
 		return err
 	}
@@ -171,7 +172,7 @@ func applyAteletResponseState(ctx context.Context, status *ateapipb.ActorStatus,
 // its generation is older than the latest COMPLETED one, or is no longer in
 // status.snapshots, for example because a revert removed it. A repeat of the
 // latest COMPLETED generation also changes nothing, and isn't logged.
-func applyLatestDurable(ctx context.Context, status *ateapipb.ActorStatus, reported *ateapipb.SnapshotReport) error {
+func applyLatestDurable(ctx context.Context, status *ateapipb.ActorStatus, reported *workerservicepb.SnapshotReport) error {
 	if reported == nil {
 		return nil
 	}
@@ -204,10 +205,11 @@ func applyLatestDurable(ctx context.Context, status *ateapipb.ActorStatus, repor
 	if got := reported.GetObject().GetSnapshotUri(); got != want {
 		return apierror.InvalidArgument("snapshot generation %d was uploaded to %q, want %q", reported.GetGeneration(), got, want)
 	}
-	if reported.GetFidelity() == ateapipb.SnapshotFidelity_SNAPSHOT_FIDELITY_UNSPECIFIED {
+	fidelity := fidelityFromWorkerService(reported.GetFidelity())
+	if fidelity == ateapipb.SnapshotFidelity_SNAPSHOT_FIDELITY_UNSPECIFIED {
 		return apierror.InvalidArgument("snapshot generation %d reports no fidelity", reported.GetGeneration())
 	}
-	snap.Fidelity = reported.GetFidelity()
+	snap.Fidelity = fidelity
 	snap.DurableSnapshot.Status = ateapipb.SnapshotStorageStatus_SNAPSHOT_STORAGE_STATUS_COMPLETED
 	return nil
 }

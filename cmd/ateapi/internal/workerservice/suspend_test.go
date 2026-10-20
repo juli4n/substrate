@@ -26,6 +26,7 @@ import (
 	"go.ate.dev/substrate/cmd/ateapi/internal/store"
 	"go.ate.dev/substrate/cmd/ateapi/internal/store/storetest"
 	"go.ate.dev/substrate/internal/apierror"
+	"go.ate.dev/substrate/internal/proto/workerservicepb"
 	"go.ate.dev/substrate/pkg/proto/ateapipb"
 )
 
@@ -58,10 +59,10 @@ func seedHostedActor(t *testing.T, st store.Interface, workerName string) *ateap
 	})
 }
 
-func suspendRequest(actorUID string) *ateapipb.RequestActorSuspendRequest {
-	return &ateapipb.RequestActorSuspendRequest{
-		Worker:   &ateapipb.ObjectRef{Name: testWorkerName},
-		Actor:    &ateapipb.ObjectRef{Atespace: suspendAtespace, Name: suspendActor},
+func suspendRequest(actorUID string) *workerservicepb.RequestActorSuspendRequest {
+	return &workerservicepb.RequestActorSuspendRequest{
+		Worker:   &workerservicepb.ObjectRef{Name: testWorkerName},
+		Actor:    &workerservicepb.ObjectRef{Atespace: suspendAtespace, Name: suspendActor},
 		ActorUid: actorUID,
 	}
 }
@@ -80,10 +81,9 @@ func TestRequestActorSuspend(t *testing.T) {
 	control := &fakeControl{resp: &ateapipb.SuspendActorResponse{Actor: suspended}}
 	s := New(st, control, testAteletSPIFFEID, nil, "", nil)
 
-	got, err := s.RequestActorSuspend(
+	if _, err := s.RequestActorSuspend(
 		ateletauthtest.ContextWith(ateletauthtest.CertOn(t, testNode)),
-		suspendRequest(actor.GetMetadata().GetUid()))
-	if err != nil {
+		suspendRequest(actor.GetMetadata().GetUid())); err != nil {
 		t.Fatalf("RequestActorSuspend() failed: %v", err)
 	}
 	want := []*ateapipb.SuspendActorRequest{{
@@ -91,11 +91,6 @@ func TestRequestActorSuspend(t *testing.T) {
 	}}
 	if diff := cmp.Diff(want, control.calls, protocmp.Transform()); diff != "" {
 		t.Errorf("suspend calls mismatch (-want +got):\n%s", diff)
-	}
-	// The caller gets the actor as the workflow left it, so a worker can see
-	// whether the suspend it asked for actually happened.
-	if diff := cmp.Diff(suspended, got.GetActor(), protocmp.Transform()); diff != "" {
-		t.Errorf("returned actor mismatch (-want +got):\n%s", diff)
 	}
 }
 
@@ -158,40 +153,40 @@ func TestRequestActorSuspend_Errors(t *testing.T) {
 	tests := []struct {
 		name string
 		ctx  context.Context
-		req  *ateapipb.RequestActorSuspendRequest
+		req  *workerservicepb.RequestActorSuspendRequest
 		want codes.Code
 	}{
 		{"unauthenticated", ateletauthtest.ContextWith(nil), suspendRequest(uid), codes.Unauthenticated},
-		{"no worker ref", authed, &ateapipb.RequestActorSuspendRequest{
-			Actor:    &ateapipb.ObjectRef{Atespace: suspendAtespace, Name: suspendActor},
+		{"no worker ref", authed, &workerservicepb.RequestActorSuspendRequest{
+			Actor:    &workerservicepb.ObjectRef{Atespace: suspendAtespace, Name: suspendActor},
 			ActorUid: uid,
 		}, codes.InvalidArgument},
-		{"atespaced worker ref", authed, &ateapipb.RequestActorSuspendRequest{
-			Worker:   &ateapipb.ObjectRef{Atespace: suspendAtespace, Name: testWorkerName},
-			Actor:    &ateapipb.ObjectRef{Atespace: suspendAtespace, Name: suspendActor},
+		{"atespaced worker ref", authed, &workerservicepb.RequestActorSuspendRequest{
+			Worker:   &workerservicepb.ObjectRef{Atespace: suspendAtespace, Name: testWorkerName},
+			Actor:    &workerservicepb.ObjectRef{Atespace: suspendAtespace, Name: suspendActor},
 			ActorUid: uid,
 		}, codes.InvalidArgument},
-		{"no actor ref", authed, &ateapipb.RequestActorSuspendRequest{
-			Worker:   &ateapipb.ObjectRef{Name: testWorkerName},
+		{"no actor ref", authed, &workerservicepb.RequestActorSuspendRequest{
+			Worker:   &workerservicepb.ObjectRef{Name: testWorkerName},
 			ActorUid: uid,
 		}, codes.InvalidArgument},
-		{"actor ref without atespace", authed, &ateapipb.RequestActorSuspendRequest{
-			Worker:   &ateapipb.ObjectRef{Name: testWorkerName},
-			Actor:    &ateapipb.ObjectRef{Name: suspendActor},
+		{"actor ref without atespace", authed, &workerservicepb.RequestActorSuspendRequest{
+			Worker:   &workerservicepb.ObjectRef{Name: testWorkerName},
+			Actor:    &workerservicepb.ObjectRef{Name: suspendActor},
 			ActorUid: uid,
 		}, codes.InvalidArgument},
 		// Without a UID the request could outlive the actor it was made about
 		// and suspend whatever took its name, so an absent one is refused
 		// rather than treated as "whichever is there now".
 		{"no actor uid", authed, suspendRequest(""), codes.InvalidArgument},
-		{"absent worker", authed, &ateapipb.RequestActorSuspendRequest{
-			Worker:   &ateapipb.ObjectRef{Name: "5c7e2a91-3d4b-4f60-8a1c-2e9b7d0f4a63"},
-			Actor:    &ateapipb.ObjectRef{Atespace: suspendAtespace, Name: suspendActor},
+		{"absent worker", authed, &workerservicepb.RequestActorSuspendRequest{
+			Worker:   &workerservicepb.ObjectRef{Name: "5c7e2a91-3d4b-4f60-8a1c-2e9b7d0f4a63"},
+			Actor:    &workerservicepb.ObjectRef{Atespace: suspendAtespace, Name: suspendActor},
 			ActorUid: uid,
 		}, codes.NotFound},
-		{"absent actor", authed, &ateapipb.RequestActorSuspendRequest{
-			Worker:   &ateapipb.ObjectRef{Name: testWorkerName},
-			Actor:    &ateapipb.ObjectRef{Atespace: suspendAtespace, Name: "no-such-actor"},
+		{"absent actor", authed, &workerservicepb.RequestActorSuspendRequest{
+			Worker:   &workerservicepb.ObjectRef{Name: testWorkerName},
+			Actor:    &workerservicepb.ObjectRef{Atespace: suspendAtespace, Name: "no-such-actor"},
 			ActorUid: uid,
 		}, codes.NotFound},
 	}

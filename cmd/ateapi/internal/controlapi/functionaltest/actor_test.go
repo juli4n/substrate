@@ -38,6 +38,7 @@ import (
 	"go.ate.dev/substrate/internal/objectstore"
 	"go.ate.dev/substrate/internal/preview"
 	"go.ate.dev/substrate/internal/proto/ateletpb"
+	"go.ate.dev/substrate/internal/proto/workerservicepb"
 	"go.ate.dev/substrate/internal/resources"
 	"go.ate.dev/substrate/internal/volume"
 	"go.ate.dev/substrate/pkg/proto/ateapipb"
@@ -5348,12 +5349,12 @@ func TestResumeActor_RelocatesAfterDetach(t *testing.T) {
 	// node1's atelet reports the paused snapshot uploaded and detached: a report
 	// with only latest_durable.
 	ls := localSnapshot(paused.GetStatus())
-	if err := tc.service.ApplyActorSnapshotState(context.Background(), resources.ActorRefFromActor(paused), paused.GetMetadata().GetUid(), "node1", &ateapipb.ActorSnapshotState{
-		LatestDurable: &ateapipb.SnapshotReport{
+	if err := tc.service.ApplyActorSnapshotState(context.Background(), resources.ActorRefFromActor(paused), paused.GetMetadata().GetUid(), "node1", &workerservicepb.ActorSnapshotState{
+		LatestDurable: &workerservicepb.SnapshotReport{
 			Uuid:       ls.GetUuid(),
 			Generation: ls.GetGeneration(),
-			Fidelity:   ls.GetFidelity(),
-			Object:     ls.GetDurableSnapshot().GetObject(),
+			Fidelity:   workerservicepb.SnapshotFidelity(ls.GetFidelity()),
+			Object:     &workerservicepb.ObjectSnapshot{SnapshotUri: ls.GetDurableSnapshot().GetObject().GetSnapshotUri()},
 		},
 	}); err != nil {
 		t.Fatalf("ApplyActorSnapshotState(%s) failed: %v", pinned, err)

@@ -45,6 +45,7 @@ import (
 	"go.ate.dev/substrate/internal/oidcjwt"
 	"go.ate.dev/substrate/internal/pluginsocket"
 	"go.ate.dev/substrate/internal/preview"
+	"go.ate.dev/substrate/internal/proto/workerservicepb"
 	"go.ate.dev/substrate/internal/resources"
 	"go.ate.dev/substrate/internal/serverboot"
 	"go.ate.dev/substrate/internal/version"
@@ -402,7 +403,7 @@ func main() {
 	)
 	reflection.Register(mux)
 	ateapipb.RegisterControlServer(mux, controlSrv)
-	ateapipb.RegisterWorkerServiceServer(mux, workerservice.New(persistence, controlSrv, ateletSPIFFEID, actorIDCAPool, *actorJWTIssuer, actorIDJWTAuthorityPool))
+	workerservicepb.RegisterWorkerServiceServer(mux, workerservice.New(persistence, controlSrv, ateletSPIFFEID, actorIDCAPool, *actorJWTIssuer, actorIDJWTAuthorityPool))
 
 	// Every RPC needs the store, so a replica that cannot reach it leaves the
 	// Service until it can. Liveness stays green: the pool reconnects on its own.

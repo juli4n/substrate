@@ -27,6 +27,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"go.ate.dev/substrate/internal/proto/ateletpb"
+	"go.ate.dev/substrate/internal/proto/workerservicepb"
 	"go.ate.dev/substrate/internal/resources"
 	"go.ate.dev/substrate/internal/substratex509"
 	"go.ate.dev/substrate/pkg/proto/ateapipb"
@@ -86,23 +87,23 @@ func workerCertificate(t *testing.T, podUID, nodeName string) *x509.Certificate 
 //
 // https://google.github.io/styleguide/go/best-practices.html#use-real-transports
 type fakeWorkerService struct {
-	ateapipb.WorkerServiceClient
+	workerservicepb.WorkerServiceClient
 
-	got      []*ateapipb.RegisterWorkerRequest
-	mintGot  []*ateapipb.MintWorkerActorCertificateRequest
-	mintResp *ateapipb.MintWorkerActorCertificateResponse
+	got      []*workerservicepb.RegisterWorkerRequest
+	mintGot  []*workerservicepb.MintWorkerActorCertificateRequest
+	mintResp *workerservicepb.MintWorkerActorCertificateResponse
 	err      error
 }
 
-func (s *fakeWorkerService) RegisterWorker(_ context.Context, in *ateapipb.RegisterWorkerRequest, _ ...grpc.CallOption) (*ateapipb.RegisterWorkerResponse, error) {
+func (s *fakeWorkerService) RegisterWorker(_ context.Context, in *workerservicepb.RegisterWorkerRequest, _ ...grpc.CallOption) (*workerservicepb.RegisterWorkerResponse, error) {
 	if s.err != nil {
 		return nil, s.err
 	}
 	s.got = append(s.got, in)
-	return &ateapipb.RegisterWorkerResponse{}, nil
+	return &workerservicepb.RegisterWorkerResponse{}, nil
 }
 
-func (s *fakeWorkerService) MintWorkerActorCertificate(_ context.Context, in *ateapipb.MintWorkerActorCertificateRequest, _ ...grpc.CallOption) (*ateapipb.MintWorkerActorCertificateResponse, error) {
+func (s *fakeWorkerService) MintWorkerActorCertificate(_ context.Context, in *workerservicepb.MintWorkerActorCertificateRequest, _ ...grpc.CallOption) (*workerservicepb.MintWorkerActorCertificateResponse, error) {
 	if s.err != nil {
 		return nil, s.err
 	}
@@ -110,7 +111,7 @@ func (s *fakeWorkerService) MintWorkerActorCertificate(_ context.Context, in *at
 	if s.mintResp != nil {
 		return s.mintResp, nil
 	}
-	return &ateapipb.MintWorkerActorCertificateResponse{}, nil
+	return &workerservicepb.MintWorkerActorCertificateResponse{}, nil
 }
 
 func TestRegisterWorker(t *testing.T) {
@@ -126,12 +127,12 @@ func TestRegisterWorker(t *testing.T) {
 			},
 		}
 	}
-	wantRuntime := func(hash string) *ateapipb.SandboxRuntime {
-		return &ateapipb.SandboxRuntime{
+	wantRuntime := func(hash string) *workerservicepb.SandboxRuntime {
+		return &workerservicepb.SandboxRuntime{
 			SandboxClass: "gvisor",
-			Version: &ateapipb.VersionedSandboxCompat{
+			Version: &workerservicepb.VersionedSandboxCompat{
 				SchemaVersion: "v1",
-				Attributes: []*ateapipb.AttributeEntry{
+				Attributes: []*workerservicepb.AttributeEntry{
 					{Key: "architecture", Value: "amd64"},
 					{Key: "sandbox_bundle_hash", Value: hash},
 				},
@@ -139,12 +140,12 @@ func TestRegisterWorker(t *testing.T) {
 		}
 	}
 	reqDefault, wantDefault := reqRuntime("9988"), wantRuntime("9988")
-	forwarded := func(capacity *ateapipb.WorkerResources, restorable ...*ateapipb.SandboxRuntime) []*ateapipb.RegisterWorkerRequest {
+	forwarded := func(capacity *workerservicepb.WorkerResources, restorable ...*workerservicepb.SandboxRuntime) []*workerservicepb.RegisterWorkerRequest {
 		// The Worker is named after the worker pod UID, taken from the
 		// certificate rather than the request; capacity and runtimes come
 		// from what the worker reported.
-		return []*ateapipb.RegisterWorkerRequest{{
-			Worker:             &ateapipb.ObjectRef{Name: "pod-a"},
+		return []*workerservicepb.RegisterWorkerRequest{{
+			Worker:             &workerservicepb.ObjectRef{Name: "pod-a"},
 			Capacity:           capacity,
 			DefaultRuntime:     wantDefault,
 			RestorableRuntimes: restorable,
@@ -159,14 +160,14 @@ func TestRegisterWorker(t *testing.T) {
 		serviceErr    error
 		req           *ateletpb.RegisterWorkerRequest
 		wantCode      codes.Code
-		wantForwarded []*ateapipb.RegisterWorkerRequest
+		wantForwarded []*workerservicepb.RegisterWorkerRequest
 	}{{
 		name: "records what the worker says",
 		req: &ateletpb.RegisterWorkerRequest{
 			Capacity:       &ateletpb.WorkerResources{Actors: 4, CpuMillicores: 2000, MemoryBytes: 4 << 30},
 			DefaultRuntime: reqDefault,
 		},
-		wantForwarded: forwarded(&ateapipb.WorkerResources{Actors: 4, CpuMillicores: 2000, MemoryBytes: 4294967296}),
+		wantForwarded: forwarded(&workerservicepb.WorkerResources{Actors: 4, CpuMillicores: 2000, MemoryBytes: 4294967296}),
 	}, {
 		name: "forwards restorable runtimes",
 		req: &ateletpb.RegisterWorkerRequest{
@@ -174,15 +175,15 @@ func TestRegisterWorker(t *testing.T) {
 			DefaultRuntime:     reqDefault,
 			RestorableRuntimes: []*ateletpb.SandboxRuntime{reqRuntime("d547")},
 		},
-		wantForwarded: forwarded(&ateapipb.WorkerResources{Actors: 1}, wantRuntime("d547")),
+		wantForwarded: forwarded(&workerservicepb.WorkerResources{Actors: 1}, wantRuntime("d547")),
 	}, {
 		name:          "omits undetermined compute",
 		req:           &ateletpb.RegisterWorkerRequest{Capacity: &ateletpb.WorkerResources{Actors: 1}, DefaultRuntime: reqDefault},
-		wantForwarded: forwarded(&ateapipb.WorkerResources{Actors: 1}),
+		wantForwarded: forwarded(&workerservicepb.WorkerResources{Actors: 1}),
 	}, {
 		name:          "forwards empty capacity",
 		req:           &ateletpb.RegisterWorkerRequest{Capacity: &ateletpb.WorkerResources{}, DefaultRuntime: reqDefault},
-		wantForwarded: forwarded(&ateapipb.WorkerResources{}),
+		wantForwarded: forwarded(&workerservicepb.WorkerResources{}),
 	}, {
 		name: "rejects invalid capacity without forwarding",
 		req: &ateletpb.RegisterWorkerRequest{
@@ -234,27 +235,27 @@ func TestRegisterWorker(t *testing.T) {
 }
 
 type fakeSuspendService struct {
-	ateapipb.WorkerServiceClient
+	workerservicepb.WorkerServiceClient
 
-	got        []*ateapipb.RequestActorSuspendRequest
-	gotCrashed []*ateapipb.ReportActorCrashedRequest
+	got        []*workerservicepb.RequestActorSuspendRequest
+	gotCrashed []*workerservicepb.ReportActorCrashedRequest
 	err        error
 }
 
-func (s *fakeSuspendService) ReportActorCrashed(_ context.Context, in *ateapipb.ReportActorCrashedRequest, _ ...grpc.CallOption) (*ateapipb.ReportActorCrashedResponse, error) {
+func (s *fakeSuspendService) ReportActorCrashed(_ context.Context, in *workerservicepb.ReportActorCrashedRequest, _ ...grpc.CallOption) (*workerservicepb.ReportActorCrashedResponse, error) {
 	if s.err != nil {
 		return nil, s.err
 	}
 	s.gotCrashed = append(s.gotCrashed, in)
-	return &ateapipb.ReportActorCrashedResponse{}, nil
+	return &workerservicepb.ReportActorCrashedResponse{}, nil
 }
 
-func (s *fakeSuspendService) RequestActorSuspend(_ context.Context, in *ateapipb.RequestActorSuspendRequest, _ ...grpc.CallOption) (*ateapipb.RequestActorSuspendResponse, error) {
+func (s *fakeSuspendService) RequestActorSuspend(_ context.Context, in *workerservicepb.RequestActorSuspendRequest, _ ...grpc.CallOption) (*workerservicepb.RequestActorSuspendResponse, error) {
 	if s.err != nil {
 		return nil, s.err
 	}
 	s.got = append(s.got, in)
-	return &ateapipb.RequestActorSuspendResponse{}, nil
+	return &workerservicepb.RequestActorSuspendResponse{}, nil
 }
 
 func TestRequestActorSuspendNamesTheCallingWorker(t *testing.T) {
@@ -270,12 +271,12 @@ func TestRequestActorSuspendNamesTheCallingWorker(t *testing.T) {
 		t.Fatalf("RequestActorSuspend() failed: %v", err)
 	}
 
-	want := []*ateapipb.RequestActorSuspendRequest{{
+	want := []*workerservicepb.RequestActorSuspendRequest{{
 		// The Worker is named after the worker pod UID, taken from the
 		// certificate rather than the request: a worker may speak for the
 		// actors it hosts, and only the control plane knows which those are.
-		Worker:   &ateapipb.ObjectRef{Name: "pod-a"},
-		Actor:    &ateapipb.ObjectRef{Atespace: "team-a", Name: "actor-1"},
+		Worker:   &workerservicepb.ObjectRef{Name: "pod-a"},
+		Actor:    &workerservicepb.ObjectRef{Atespace: "team-a", Name: "actor-1"},
 		ActorUid: "01234567-89ab-cdef-0123-456789abcdef",
 	}}
 	if diff := cmp.Diff(want, workers.got, protocmp.Transform()); diff != "" {
@@ -320,7 +321,7 @@ func TestRequestActorSuspendSurfacesRefusal(t *testing.T) {
 func TestMintActorCertificateForwardsToWorkerService(t *testing.T) {
 	wantCerts := [][]byte{[]byte("cert-der-bytes")}
 	workers := &fakeWorkerService{
-		mintResp: &ateapipb.MintWorkerActorCertificateResponse{
+		mintResp: &workerservicepb.MintWorkerActorCertificateResponse{
 			ActorCertificates: wantCerts,
 		},
 	}
@@ -337,10 +338,10 @@ func TestMintActorCertificateForwardsToWorkerService(t *testing.T) {
 		t.Fatalf("MintActorCertificate() failed: %v", err)
 	}
 
-	want := []*ateapipb.MintWorkerActorCertificateRequest{{
+	want := []*workerservicepb.MintWorkerActorCertificateRequest{{
 		// The worker comes from the caller's certificate.
-		Worker: &ateapipb.ObjectRef{Name: "pod-a"},
-		Actor: &ateapipb.ObjectRef{
+		Worker: &workerservicepb.ObjectRef{Name: "pod-a"},
+		Actor: &workerservicepb.ObjectRef{
 			Atespace: "team-a",
 			Name:     "actor-1",
 		},
@@ -490,9 +491,9 @@ func TestReportActorCrashedNamesTheCallingWorker(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("ReportActorCrashed() failed: %v", err)
 	}
-	want := []*ateapipb.ReportActorCrashedRequest{{
-		Worker:   &ateapipb.ObjectRef{Name: "pod-a"},
-		Actor:    &ateapipb.ObjectRef{Atespace: "team-a", Name: "actor-1"},
+	want := []*workerservicepb.ReportActorCrashedRequest{{
+		Worker:   &workerservicepb.ObjectRef{Name: "pod-a"},
+		Actor:    &workerservicepb.ObjectRef{Atespace: "team-a", Name: "actor-1"},
 		ActorUid: "01234567-89ab-cdef-0123-456789abcdef",
 		Message:  "cloud-hypervisor exited",
 	}}

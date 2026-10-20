@@ -20,8 +20,10 @@ import (
 	"testing"
 
 	"go.ate.dev/substrate/internal/apierror"
+	"go.ate.dev/substrate/internal/proto/workerservicepb"
 	"go.ate.dev/substrate/pkg/proto/ateapipb"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/protobuf/reflect/protoreflect"
 )
 
 func TestDefaultRPCPermissions(t *testing.T) {
@@ -679,24 +681,29 @@ func TestDefaultRPCPermissions_UnexpectedRequestTypeFailsClosed(t *testing.T) {
 	}
 }
 
-// Every RPC in ateapi.proto has exactly one of a permission rule or a reason
-// its handler authorizes it, and the registry names no RPC that isn't in
-// ateapi.proto.
+// Every RPC in ateapi.proto and workerservice.proto has exactly one of a
+// permission rule or a reason its handler authorizes it, and the registry names
+// no RPC that isn't in those protos.
 func TestDefaultRPCPermissions_CoversEveryServedRPC(t *testing.T) {
 	served := map[string]bool{}
-	services := ateapipb.File_ateapi_proto.Services()
-	for i := range services.Len() {
-		sd := services.Get(i)
-		methods := sd.Methods()
-		for j := range methods.Len() {
-			m := methods.Get(j)
-			fullMethod := "/" + string(sd.FullName()) + "/" + string(m.Name())
-			if m.IsStreamingClient() || m.IsStreamingServer() {
-				// The authz interceptor is unary-only, so a streaming RPC would go
-				// unchecked.
-				t.Errorf("%s is a streaming RPC, which the authz interceptor does not check", fullMethod)
+	for _, fd := range []protoreflect.FileDescriptor{
+		ateapipb.File_ateapi_proto,
+		workerservicepb.File_workerservice_proto,
+	} {
+		services := fd.Services()
+		for i := range services.Len() {
+			sd := services.Get(i)
+			methods := sd.Methods()
+			for j := range methods.Len() {
+				m := methods.Get(j)
+				fullMethod := "/" + string(sd.FullName()) + "/" + string(m.Name())
+				if m.IsStreamingClient() || m.IsStreamingServer() {
+					// The authz interceptor is unary-only, so a streaming RPC would go
+					// unchecked.
+					t.Errorf("%s is a streaming RPC, which the authz interceptor does not check", fullMethod)
+				}
+				served[fullMethod] = true
 			}
-			served[fullMethod] = true
 		}
 	}
 

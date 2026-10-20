@@ -29,6 +29,7 @@ import (
 	"go.ate.dev/substrate/internal/proto/glutton"
 	"go.ate.dev/substrate/internal/proto/grpcechopb"
 	"go.ate.dev/substrate/internal/proto/objectstoreexchangepb"
+	"go.ate.dev/substrate/internal/proto/workerservicepb"
 	"go.ate.dev/substrate/internal/protoredact"
 	"go.ate.dev/substrate/pkg/proto/ateapipb"
 	"go.ate.dev/substrate/pkg/proto/ateconfigpb"
@@ -369,6 +370,7 @@ var ourProtoFiles = []protoreflect.FileDescriptor{
 	grpcechopb.File_grpcecho_proto,
 	objectstoreexchangepb.File_exchange_proto,
 	objectstorev1.File_objectstore_proto,
+	workerservicepb.File_workerservice_proto,
 }
 
 // forEachField calls fn for every field of every message in ourProtoFiles,
@@ -402,7 +404,6 @@ func TestDebugRedactFieldsArePinned(t *testing.T) {
 	want := map[string]bool{
 		"ateapi.EnvVar.value":                                       true,
 		"ateapi.MintActorJwtResponse.actor_jwt":                     true,
-		"ateapi.MintWorkerActorJwtResponse.actor_jwt":               true,
 		"atelet.EnvVar.value":                                       true,
 		"ateworker.ContainerSpec.env":                               true,
 		"credprovider.FetchSecretResponse.opaque_bytes":             true,
@@ -411,6 +412,7 @@ func TestDebugRedactFieldsArePinned(t *testing.T) {
 		"objectstore.v1.UploadSnapshotRequest.actor_jwt":            true,
 		"objectstoreexchange.ExchangeActorJwtRequest.actor_jwt":     true,
 		"objectstoreexchange.ExchangeActorJwtResponse.access_token": true,
+		"workerservice.MintWorkerActorJwtResponse.actor_jwt":        true,
 	}
 	got := map[string]bool{}
 	forEachField(func(fd protoreflect.FieldDescriptor) {

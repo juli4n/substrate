@@ -22,12 +22,12 @@ import (
 	"log/slog"
 	"time"
 
-	"go.ate.dev/substrate/cmd/ateapi/internal/apivalidation"
 	"go.ate.dev/substrate/cmd/ateapi/internal/ateletauth"
 	"go.ate.dev/substrate/cmd/ateapi/internal/controlapi"
 	"go.ate.dev/substrate/cmd/ateapi/internal/store"
 	"go.ate.dev/substrate/internal/actoridjwt"
 	"go.ate.dev/substrate/internal/apierror"
+	"go.ate.dev/substrate/internal/proto/workerservicepb"
 	"go.ate.dev/substrate/internal/resources"
 	"go.ate.dev/substrate/pkg/proto/ateapipb"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -38,8 +38,8 @@ import (
 // plugins that exchange it for short-lived credentials.
 const workerActorJWTLifetime = time.Hour
 
-func (s *Server) MintWorkerActorJwt(ctx context.Context, req *ateapipb.MintWorkerActorJwtRequest) (*ateapipb.MintWorkerActorJwtResponse, error) {
-	if errs := apivalidation.ValidateMintWorkerActorJwtRequest(ctx, req); len(errs) > 0 {
+func (s *Server) MintWorkerActorJwt(ctx context.Context, req *workerservicepb.MintWorkerActorJwtRequest) (*workerservicepb.MintWorkerActorJwtResponse, error) {
+	if errs := validateMintWorkerActorJwtRequest(ctx, req); len(errs) > 0 {
 		return nil, resources.ToAPIError(errs)
 	}
 
@@ -50,7 +50,7 @@ func (s *Server) MintWorkerActorJwt(ctx context.Context, req *ateapipb.MintWorke
 
 	// The actor doesn't need to be running: tokens are needed to fetch a
 	// snapshot before resume and to upload a checkpoint after pause.
-	dbActor, err := s.store.GetActor(ctx, resources.ActorRefFromObjectRef(req.GetActor()))
+	dbActor, err := s.store.GetActor(ctx, actorRefFromObjectRef(req.GetActor()))
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, apierror.NotFound("actor not found")
 	} else if err != nil {
@@ -93,7 +93,7 @@ func (s *Server) MintWorkerActorJwt(ctx context.Context, req *ateapipb.MintWorke
 	if err != nil {
 		return nil, fmt.Errorf("while signing worker-for-actor JWT: %w", err)
 	}
-	return &ateapipb.MintWorkerActorJwtResponse{
+	return &workerservicepb.MintWorkerActorJwtResponse{
 		ActorJwt:   token,
 		ExpireTime: timestamppb.New(expiresAt),
 	}, nil

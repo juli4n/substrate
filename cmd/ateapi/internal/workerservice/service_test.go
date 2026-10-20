@@ -20,6 +20,7 @@ import (
 
 	"go.ate.dev/substrate/cmd/ateapi/internal/store"
 	"go.ate.dev/substrate/internal/installdefaults"
+	"go.ate.dev/substrate/internal/proto/workerservicepb"
 	"go.ate.dev/substrate/internal/resources"
 	"go.ate.dev/substrate/pkg/proto/ateapipb"
 )
@@ -54,7 +55,7 @@ func (f *fakeControl) SuspendActor(_ context.Context, req *ateapipb.SuspendActor
 	return f.resp, f.err
 }
 
-func (f *fakeControl) ApplyActorSnapshotState(_ context.Context, actorRef resources.ActorRef, actorUID, node string, state *ateapipb.ActorSnapshotState) error {
+func (f *fakeControl) ApplyActorSnapshotState(_ context.Context, actorRef resources.ActorRef, actorUID, node string, state *workerservicepb.ActorSnapshotState) error {
 	f.reports = append(f.reports, appliedReport{actorRef: actorRef, actorUID: actorUID, node: node, state: state})
 	return f.reportErr
 }
@@ -64,7 +65,7 @@ type appliedReport struct {
 	actorRef resources.ActorRef
 	actorUID string
 	node     string
-	state    *ateapipb.ActorSnapshotState
+	state    *workerservicepb.ActorSnapshotState
 }
 
 // crashCall is one CrashActorReportedByWorker call.
@@ -86,7 +87,7 @@ func (f *fakeControl) CrashActorReportedByWorker(_ context.Context, actorRef res
 func seedReportedWorker(t *testing.T, st store.Interface, nodeName string, capacity *ateapipb.WorkerResources) *ateapipb.Worker {
 	t.Helper()
 	return seedWorker(t, st, testWorkerName, nodeName, testDefaultRuntime.GetSandboxClass(), &ateapipb.WorkerStatus{
-		State: ateapipb.WorkerState_WORKER_STATE_ACTIVE, Capacity: capacity, DefaultRuntime: testDefaultRuntime,
+		State: ateapipb.WorkerState_WORKER_STATE_ACTIVE, Capacity: capacity, DefaultRuntime: toAteAPISandboxRuntime(testDefaultRuntime),
 	})
 }
 

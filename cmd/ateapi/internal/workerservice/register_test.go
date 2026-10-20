@@ -26,6 +26,7 @@ import (
 	"go.ate.dev/substrate/cmd/ateapi/internal/ateletauth/ateletauthtest"
 	"go.ate.dev/substrate/cmd/ateapi/internal/store/storetest"
 	"go.ate.dev/substrate/internal/apierror"
+	"go.ate.dev/substrate/internal/proto/workerservicepb"
 	"go.ate.dev/substrate/pkg/proto/ateapipb"
 	"google.golang.org/grpc/codes"
 )
@@ -33,12 +34,12 @@ import (
 // testRuntime is a SandboxRuntime of the given class whose compatibility
 // identity is a single architecture attribute, which is enough to tell two
 // runtimes apart.
-func testRuntime(class, arch string) *ateapipb.SandboxRuntime {
-	return &ateapipb.SandboxRuntime{
+func testRuntime(class, arch string) *workerservicepb.SandboxRuntime {
+	return &workerservicepb.SandboxRuntime{
 		SandboxClass: class,
-		Version: &ateapipb.VersionedSandboxCompat{
+		Version: &workerservicepb.VersionedSandboxCompat{
 			SchemaVersion: "v1",
-			Attributes:    []*ateapipb.AttributeEntry{{Key: "architecture", Value: arch}},
+			Attributes:    []*workerservicepb.AttributeEntry{{Key: "architecture", Value: arch}},
 		},
 	}
 }
@@ -47,10 +48,10 @@ func testRuntime(class, arch string) *ateapipb.SandboxRuntime {
 // of the class it gives the Worker.
 var testDefaultRuntime = testRuntime("gvisor", "amd64")
 
-func setRequest(actors int32) *ateapipb.RegisterWorkerRequest {
-	return &ateapipb.RegisterWorkerRequest{
-		Worker:         &ateapipb.ObjectRef{Name: testWorkerName},
-		Capacity:       &ateapipb.WorkerResources{Actors: actors},
+func setRequest(actors int32) *workerservicepb.RegisterWorkerRequest {
+	return &workerservicepb.RegisterWorkerRequest{
+		Worker:         &workerservicepb.ObjectRef{Name: testWorkerName},
+		Capacity:       &workerservicepb.WorkerResources{Actors: actors},
 		DefaultRuntime: testDefaultRuntime,
 	}
 }
@@ -63,17 +64,20 @@ func TestRegisterWorker(t *testing.T) {
 	s := New(st, &fakeControl{}, testAteletSPIFFEID, nil, "", nil)
 	seedReportedWorker(t, st, testNode, &ateapipb.WorkerResources{Actors: 1, CpuMillicores: 2000, MemoryBytes: 0})
 
-	got, err := s.RegisterWorker(ateletauthtest.ContextWith(ateletauthtest.CertOn(t, testNode)), setRequest(4094))
-	if err != nil {
+	if _, err := s.RegisterWorker(ateletauthtest.ContextWith(ateletauthtest.CertOn(t, testNode)), setRequest(4094)); err != nil {
 		t.Fatalf("RegisterWorker() failed: %v", err)
 	}
-	if want := int32(4094); got.GetWorker().GetStatus().GetCapacity().GetActors() != want {
-		t.Errorf("capacity.actors = %d, want %d", got.GetWorker().GetStatus().GetCapacity().GetActors(), want)
+	after, err := st.GetWorker(context.Background(), testWorkerName)
+	if err != nil {
+		t.Fatalf("GetWorker: %v", err)
+	}
+	if want := int32(4094); after.GetStatus().GetCapacity().GetActors() != want {
+		t.Errorf("capacity.actors = %d, want %d", after.GetStatus().GetCapacity().GetActors(), want)
 	}
 	// A report replaces what is recorded. The Worker reports everything it has,
 	// so a dimension this one leaves out is one it no longer supplies -- keeping
 	// the old value would advertise compute nothing claims to have.
-	if c := got.GetWorker().GetStatus().GetCapacity(); c.GetCpuMillicores() != 0 || c.GetMemoryBytes() != 0 {
+	if c := after.GetStatus().GetCapacity(); c.GetCpuMillicores() != 0 || c.GetMemoryBytes() != 0 {
 		t.Errorf("capacity = %v, want the report's own (no cpu or memory)", c)
 	}
 }
@@ -96,8 +100,8 @@ func TestRegisterWorker_Runtimes(t *testing.T) {
 		return &ateapipb.WorkerStatus{
 			State:              ateapipb.WorkerState_WORKER_STATE_ACTIVE,
 			Capacity:           &ateapipb.WorkerResources{Actors: 1},
-			DefaultRuntime:     gvisorAMD64,
-			RestorableRuntimes: []*ateapipb.SandboxRuntime{gvisorV8, gvisorV9},
+			DefaultRuntime:     toAteAPISandboxRuntime(gvisorAMD64),
+			RestorableRuntimes: toAteAPISandboxRuntimes([]*workerservicepb.SandboxRuntime{gvisorV8, gvisorV9}),
 		}
 	}
 
@@ -106,8 +110,8 @@ func TestRegisterWorker_Runtimes(t *testing.T) {
 		// workerClass is the class the pool created the Worker with; "" is
 		// a Worker recorded without one.
 		workerClass string
-		def         *ateapipb.SandboxRuntime
-		restorable  []*ateapipb.SandboxRuntime
+		def         *workerservicepb.SandboxRuntime
+		restorable  []*workerservicepb.SandboxRuntime
 		wantCode    codes.Code
 		// wantWrite is whether the report changes the record.
 		wantWrite bool
@@ -115,18 +119,18 @@ func TestRegisterWorker_Runtimes(t *testing.T) {
 		name:        "identical report writes nothing",
 		workerClass: "gvisor",
 		def:         gvisorAMD64,
-		restorable:  []*ateapipb.SandboxRuntime{gvisorV8, gvisorV9},
+		restorable:  []*workerservicepb.SandboxRuntime{gvisorV8, gvisorV9},
 	}, {
 		name:        "changed default runtime writes",
 		workerClass: "gvisor",
 		def:         gvisorARM64,
-		restorable:  []*ateapipb.SandboxRuntime{gvisorV8, gvisorV9},
+		restorable:  []*workerservicepb.SandboxRuntime{gvisorV8, gvisorV9},
 		wantWrite:   true,
 	}, {
 		name:        "changed restorable runtime writes",
 		workerClass: "gvisor",
 		def:         gvisorAMD64,
-		restorable:  []*ateapipb.SandboxRuntime{gvisorV8, gvisorARM64},
+		restorable:  []*workerservicepb.SandboxRuntime{gvisorV8, gvisorARM64},
 		wantWrite:   true,
 	}, {
 		// A report is compared as sent: the list is atomic, so a new order
@@ -134,7 +138,7 @@ func TestRegisterWorker_Runtimes(t *testing.T) {
 		name:        "reordered restorable runtimes write",
 		workerClass: "gvisor",
 		def:         gvisorAMD64,
-		restorable:  []*ateapipb.SandboxRuntime{gvisorV9, gvisorV8},
+		restorable:  []*workerservicepb.SandboxRuntime{gvisorV9, gvisorV8},
 		wantWrite:   true,
 	}, {
 		// Runtimes are replaced like capacity: a report that lists no
@@ -152,25 +156,25 @@ func TestRegisterWorker_Runtimes(t *testing.T) {
 		name:        "default runtime of another class is refused",
 		workerClass: "gvisor",
 		def:         microvm,
-		restorable:  []*ateapipb.SandboxRuntime{gvisorV8, gvisorV9},
+		restorable:  []*workerservicepb.SandboxRuntime{gvisorV8, gvisorV9},
 		wantCode:    codes.FailedPrecondition,
 	}, {
 		name:        "restorable runtime of another class is refused",
 		workerClass: "gvisor",
 		def:         gvisorAMD64,
-		restorable:  []*ateapipb.SandboxRuntime{gvisorV8, microvm},
+		restorable:  []*workerservicepb.SandboxRuntime{gvisorV8, microvm},
 		wantCode:    codes.FailedPrecondition,
 	}, {
 		// A Worker recorded without a class has nothing for a report to
 		// contradict.
 		name:       "unclassed Worker takes a default runtime of any class",
 		def:        microvm,
-		restorable: []*ateapipb.SandboxRuntime{gvisorV8, gvisorV9},
+		restorable: []*workerservicepb.SandboxRuntime{gvisorV8, gvisorV9},
 		wantWrite:  true,
 	}, {
 		name:       "unclassed Worker takes restorable runtimes of mixed classes",
 		def:        gvisorAMD64,
-		restorable: []*ateapipb.SandboxRuntime{gvisorV8, microvm},
+		restorable: []*workerservicepb.SandboxRuntime{gvisorV8, microvm},
 		wantWrite:  true,
 	}}
 	for i, tt := range tests {
@@ -178,9 +182,9 @@ func TestRegisterWorker_Runtimes(t *testing.T) {
 			name := fmt.Sprintf("1a7e4c83-6d20-4f95-b3c8-%012d", i)
 			before := seedWorker(t, st, name, testNode, tt.workerClass, seeded())
 
-			got, err := s.RegisterWorker(authed, &ateapipb.RegisterWorkerRequest{
-				Worker:             &ateapipb.ObjectRef{Name: name},
-				Capacity:           &ateapipb.WorkerResources{Actors: 1},
+			_, err := s.RegisterWorker(authed, &workerservicepb.RegisterWorkerRequest{
+				Worker:             &workerservicepb.ObjectRef{Name: name},
+				Capacity:           &workerservicepb.WorkerResources{Actors: 1},
 				DefaultRuntime:     tt.def,
 				RestorableRuntimes: tt.restorable,
 			})
@@ -200,14 +204,11 @@ func TestRegisterWorker_Runtimes(t *testing.T) {
 				}
 				return
 			}
-			if diff := cmp.Diff(tt.def, after.GetStatus().GetDefaultRuntime(), protocmp.Transform()); diff != "" {
+			if diff := cmp.Diff(toAteAPISandboxRuntime(tt.def), after.GetStatus().GetDefaultRuntime(), protocmp.Transform()); diff != "" {
 				t.Errorf("default_runtime mismatch (-want +got):\n%s", diff)
 			}
-			if diff := cmp.Diff(tt.restorable, after.GetStatus().GetRestorableRuntimes(), protocmp.Transform(), cmpopts.EquateEmpty()); diff != "" {
+			if diff := cmp.Diff(toAteAPISandboxRuntimes(tt.restorable), after.GetStatus().GetRestorableRuntimes(), protocmp.Transform(), cmpopts.EquateEmpty()); diff != "" {
 				t.Errorf("restorable_runtimes mismatch (-want +got):\n%s", diff)
-			}
-			if diff := cmp.Diff(after, got.GetWorker(), protocmp.Transform()); diff != "" {
-				t.Errorf("response is not the stored Worker (-want +got):\n%s", diff)
 			}
 		})
 	}
@@ -270,33 +271,36 @@ func TestRegisterWorker_SortsAttributes(t *testing.T) {
 	seedReportedWorker(t, st, testNode, &ateapipb.WorkerResources{Actors: 1})
 	authed := ateletauthtest.ContextWith(ateletauthtest.CertOn(t, testNode))
 
-	runtimeWith := func(keys ...string) *ateapipb.SandboxRuntime {
+	runtimeWith := func(keys ...string) *workerservicepb.SandboxRuntime {
 		rt := testRuntime("gvisor", "amd64")
 		rt.Version.Attributes = nil
 		for _, k := range keys {
-			rt.Version.Attributes = append(rt.Version.Attributes, &ateapipb.AttributeEntry{Key: k, Value: "v"})
+			rt.Version.Attributes = append(rt.Version.Attributes, &workerservicepb.AttributeEntry{Key: k, Value: "v"})
 		}
 		return rt
 	}
-	register := func(def, restorable *ateapipb.SandboxRuntime) *ateapipb.Worker {
+	register := func(def, restorable *workerservicepb.SandboxRuntime) *ateapipb.Worker {
 		t.Helper()
-		got, err := s.RegisterWorker(authed, &ateapipb.RegisterWorkerRequest{
-			Worker:             &ateapipb.ObjectRef{Name: testWorkerName},
-			Capacity:           &ateapipb.WorkerResources{Actors: 1},
+		if _, err := s.RegisterWorker(authed, &workerservicepb.RegisterWorkerRequest{
+			Worker:             &workerservicepb.ObjectRef{Name: testWorkerName},
+			Capacity:           &workerservicepb.WorkerResources{Actors: 1},
 			DefaultRuntime:     def,
-			RestorableRuntimes: []*ateapipb.SandboxRuntime{restorable},
-		})
-		if err != nil {
+			RestorableRuntimes: []*workerservicepb.SandboxRuntime{restorable},
+		}); err != nil {
 			t.Fatalf("RegisterWorker() failed: %v", err)
 		}
-		return got.GetWorker()
+		after, err := st.GetWorker(context.Background(), testWorkerName)
+		if err != nil {
+			t.Fatalf("GetWorker: %v", err)
+		}
+		return after
 	}
 
 	first := register(runtimeWith("cpu_features", "architecture"), runtimeWith("sandbox_bundle_hash", "architecture"))
-	if diff := cmp.Diff(runtimeWith("architecture", "cpu_features"), first.GetStatus().GetDefaultRuntime(), protocmp.Transform()); diff != "" {
+	if diff := cmp.Diff(toAteAPISandboxRuntime(runtimeWith("architecture", "cpu_features")), first.GetStatus().GetDefaultRuntime(), protocmp.Transform()); diff != "" {
 		t.Errorf("default_runtime not stored sorted by key (-want +got):\n%s", diff)
 	}
-	if diff := cmp.Diff([]*ateapipb.SandboxRuntime{runtimeWith("architecture", "sandbox_bundle_hash")}, first.GetStatus().GetRestorableRuntimes(), protocmp.Transform()); diff != "" {
+	if diff := cmp.Diff([]*ateapipb.SandboxRuntime{toAteAPISandboxRuntime(runtimeWith("architecture", "sandbox_bundle_hash"))}, first.GetStatus().GetRestorableRuntimes(), protocmp.Transform()); diff != "" {
 		t.Errorf("restorable_runtimes not stored sorted by key (-want +got):\n%s", diff)
 	}
 
@@ -316,25 +320,25 @@ func TestRegisterWorker_Errors(t *testing.T) {
 	tests := []struct {
 		name string
 		ctx  context.Context
-		req  *ateapipb.RegisterWorkerRequest
+		req  *workerservicepb.RegisterWorkerRequest
 		want codes.Code
 	}{
 		{"unauthenticated", ateletauthtest.ContextWith(nil), setRequest(2), codes.Unauthenticated},
-		{"no worker ref", authed, &ateapipb.RegisterWorkerRequest{
-			Capacity:       &ateapipb.WorkerResources{Actors: 2},
+		{"no worker ref", authed, &workerservicepb.RegisterWorkerRequest{
+			Capacity:       &workerservicepb.WorkerResources{Actors: 2},
 			DefaultRuntime: testDefaultRuntime,
 		}, codes.InvalidArgument},
-		{"no capacity", authed, &ateapipb.RegisterWorkerRequest{
-			Worker:         &ateapipb.ObjectRef{Name: testWorkerName},
+		{"no capacity", authed, &workerservicepb.RegisterWorkerRequest{
+			Worker:         &workerservicepb.ObjectRef{Name: testWorkerName},
 			DefaultRuntime: testDefaultRuntime,
 		}, codes.InvalidArgument},
-		{"no default runtime", authed, &ateapipb.RegisterWorkerRequest{
-			Worker:   &ateapipb.ObjectRef{Name: testWorkerName},
-			Capacity: &ateapipb.WorkerResources{Actors: 2},
+		{"no default runtime", authed, &workerservicepb.RegisterWorkerRequest{
+			Worker:   &workerservicepb.ObjectRef{Name: testWorkerName},
+			Capacity: &workerservicepb.WorkerResources{Actors: 2},
 		}, codes.InvalidArgument},
-		{"absent worker", authed, &ateapipb.RegisterWorkerRequest{
-			Worker:         &ateapipb.ObjectRef{Name: "3b9f1e77-2c4d-4a80-91be-6d5c8f0a7e21"},
-			Capacity:       &ateapipb.WorkerResources{Actors: 2},
+		{"absent worker", authed, &workerservicepb.RegisterWorkerRequest{
+			Worker:         &workerservicepb.ObjectRef{Name: "3b9f1e77-2c4d-4a80-91be-6d5c8f0a7e21"},
+			Capacity:       &workerservicepb.WorkerResources{Actors: 2},
 			DefaultRuntime: testDefaultRuntime,
 		}, codes.NotFound},
 	}
@@ -360,15 +364,15 @@ func TestRegisterWorker_RejectsNonsense(t *testing.T) {
 
 	for _, tc := range []struct {
 		name     string
-		capacity *ateapipb.WorkerResources
+		capacity *workerservicepb.WorkerResources
 	}{
-		{"negative ceiling", &ateapipb.WorkerResources{Actors: -1}},
-		{"int32 underflow", &ateapipb.WorkerResources{Actors: -2147483648}},
-		{"negative quantity", &ateapipb.WorkerResources{CpuMillicores: -1, MemoryBytes: 0}},
+		{"negative ceiling", &workerservicepb.WorkerResources{Actors: -1}},
+		{"int32 underflow", &workerservicepb.WorkerResources{Actors: -2147483648}},
+		{"negative quantity", &workerservicepb.WorkerResources{CpuMillicores: -1, MemoryBytes: 0}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := s.RegisterWorker(authed, &ateapipb.RegisterWorkerRequest{
-				Worker:         &ateapipb.ObjectRef{Name: testWorkerName},
+			_, err := s.RegisterWorker(authed, &workerservicepb.RegisterWorkerRequest{
+				Worker:         &workerservicepb.ObjectRef{Name: testWorkerName},
 				Capacity:       tc.capacity,
 				DefaultRuntime: testDefaultRuntime,
 			})

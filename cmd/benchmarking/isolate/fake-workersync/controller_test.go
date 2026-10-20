@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"go.ate.dev/substrate/cmd/benchmarking/isolate/internal/fakeworker"
+	"go.ate.dev/substrate/internal/proto/workerservicepb"
 	atev1alpha1 "go.ate.dev/substrate/pkg/api/v1alpha1"
 	"go.ate.dev/substrate/pkg/proto/ateapipb"
 	"google.golang.org/grpc"
@@ -258,19 +259,19 @@ func (f *fakeControl) uid(pod string) string {
 type fakeRelay struct {
 	control  *fakeControl
 	mu       sync.Mutex
-	reported map[string]*ateapipb.WorkerResources // by Worker name
-	runtimes map[string]*ateapipb.SandboxRuntime  // default runtime, by Worker name
-	via      map[string]string                    // relay address, by Worker name
+	reported map[string]*workerservicepb.WorkerResources // by Worker name
+	runtimes map[string]*workerservicepb.SandboxRuntime  // default runtime, by Worker name
+	via      map[string]string                           // relay address, by Worker name
 	reject   map[string]codes.Code
 	calls    int
 	live     map[string]string // as last pruned to
 }
 
 func newFakeRelay() *fakeRelay {
-	return &fakeRelay{reported: map[string]*ateapipb.WorkerResources{}, runtimes: map[string]*ateapipb.SandboxRuntime{}, via: map[string]string{}, reject: map[string]codes.Code{}}
+	return &fakeRelay{reported: map[string]*workerservicepb.WorkerResources{}, runtimes: map[string]*workerservicepb.SandboxRuntime{}, via: map[string]string{}, reject: map[string]codes.Code{}}
 }
 
-func (f *fakeRelay) Report(_ context.Context, addr string, req *ateapipb.RegisterWorkerRequest) error {
+func (f *fakeRelay) Report(_ context.Context, addr string, req *workerservicepb.RegisterWorkerRequest) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls++
@@ -284,7 +285,13 @@ func (f *fakeRelay) Report(_ context.Context, addr string, req *ateapipb.Registe
 	if f.control != nil {
 		f.control.mu.Lock()
 		if w, ok := f.control.workers[name]; ok {
-			w.Status.Capacity, w.Status.DefaultRuntime = req.GetCapacity(), req.GetDefaultRuntime()
+			if cap := req.GetCapacity(); cap != nil {
+				w.Status.Capacity = &ateapipb.WorkerResources{
+					CpuMillicores: cap.GetCpuMillicores(),
+					MemoryBytes:   cap.GetMemoryBytes(),
+					Actors:        cap.GetActors(),
+				}
+			}
 		}
 		f.control.mu.Unlock()
 	}
@@ -413,9 +420,9 @@ func poolNames(name string, n int) []string {
 	return out
 }
 
-func wantCapacity(actors int32, cpu, mem string) *ateapipb.WorkerResources {
+func wantCapacity(actors int32, cpu, mem string) *workerservicepb.WorkerResources {
 	c, m := resource.MustParse(cpu), resource.MustParse(mem)
-	return &ateapipb.WorkerResources{Actors: actors, CpuMillicores: c.MilliValue(), MemoryBytes: m.Value()}
+	return &workerservicepb.WorkerResources{Actors: actors, CpuMillicores: c.MilliValue(), MemoryBytes: m.Value()}
 }
 
 func TestReconcileHonorsReplicasAndLimits(t *testing.T) {
@@ -449,7 +456,7 @@ func TestReconcileHonorsReplicasAndLimits(t *testing.T) {
 	if got, want := rel.reported[ctl.uid(name)], wantCapacity(1000, "1500m", "4Gi"); !proto.Equal(got, want) {
 		t.Errorf("reported %v, want %v from the pool's limits", got, want)
 	}
-	wantRuntime := &ateapipb.SandboxRuntime{SandboxClass: "gvisor", Version: hostCompat()}
+	wantRuntime := &workerservicepb.SandboxRuntime{SandboxClass: "gvisor", Version: hostCompat()}
 	if got := rel.runtimes[ctl.uid(name)]; !proto.Equal(got, wantRuntime) {
 		t.Errorf("default runtime %v, want %v: the pool's class on this host, which ate-api-server requires", got, wantRuntime)
 	}
@@ -1208,7 +1215,7 @@ func TestDeleteAll(t *testing.T) {
 }
 
 func TestCapacityFormatsLikeWorker(t *testing.T) {
-	capacity := func(wp *atev1alpha1.WorkerPool) *ateapipb.WorkerResources {
+	capacity := func(wp *atev1alpha1.WorkerPool) *workerservicepb.WorkerResources {
 		t.Helper()
 		tmpl, err := templateOf(wp)
 		if err != nil {

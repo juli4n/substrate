@@ -23,7 +23,7 @@ import (
 
 	"go.ate.dev/substrate/cmd/benchmarking/isolate/internal/fakeworker/fakeworkertest"
 	"go.ate.dev/substrate/internal/credbundle"
-	"go.ate.dev/substrate/pkg/proto/ateapipb"
+	"go.ate.dev/substrate/internal/proto/workerservicepb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
@@ -33,22 +33,22 @@ import (
 
 // recordingWorkerService records the last report and answers with err.
 type recordingWorkerService struct {
-	got *ateapipb.RegisterWorkerRequest
+	got *workerservicepb.RegisterWorkerRequest
 	err error
 }
 
-func (f *recordingWorkerService) RegisterWorker(_ context.Context, in *ateapipb.RegisterWorkerRequest, _ ...grpc.CallOption) (*ateapipb.RegisterWorkerResponse, error) {
+func (f *recordingWorkerService) RegisterWorker(_ context.Context, in *workerservicepb.RegisterWorkerRequest, _ ...grpc.CallOption) (*workerservicepb.RegisterWorkerResponse, error) {
 	f.got = in
 	if f.err != nil {
 		return nil, f.err
 	}
-	return &ateapipb.RegisterWorkerResponse{}, nil
+	return &workerservicepb.RegisterWorkerResponse{}, nil
 }
 
-func report() *ateapipb.RegisterWorkerRequest {
-	return &ateapipb.RegisterWorkerRequest{
-		Worker: &ateapipb.ObjectRef{Name: "fake-r1-c52b9bd3-0"},
-		Capacity: &ateapipb.WorkerResources{
+func report() *workerservicepb.RegisterWorkerRequest {
+	return &workerservicepb.RegisterWorkerRequest{
+		Worker: &workerservicepb.ObjectRef{Name: "fake-r1-c52b9bd3-0"},
+		Capacity: &workerservicepb.WorkerResources{
 			Actors:        1000,
 			CpuMillicores: 64000, MemoryBytes: 256 << 30,
 		},
@@ -84,7 +84,7 @@ func TestRelayPassesThroughAteAPIServersStatus(t *testing.T) {
 // nothing but capacity reports: a minted actor certificate, say, would hand
 // fake-workersync an identity it does not hold.
 func TestRelayServesOnlyCapacityReports(t *testing.T) {
-	_, err := (&relay{client: &recordingWorkerService{}}).MintWorkerActorCertificate(context.Background(), &ateapipb.MintWorkerActorCertificateRequest{})
+	_, err := (&relay{client: &recordingWorkerService{}}).MintWorkerActorCertificate(context.Background(), &workerservicepb.MintWorkerActorCertificateRequest{})
 	if got := status.Code(err); got != codes.Unimplemented {
 		t.Errorf("MintWorkerActorCertificate code = %v, want Unimplemented", got)
 	}
@@ -104,7 +104,7 @@ func TestRelayTLSAdmitsOnlyTheAllowedID(t *testing.T) {
 		t.Fatal(err)
 	}
 	srv := grpc.NewServer(grpc.Creds(credentials.NewTLS(serverCfg)))
-	ateapipb.RegisterWorkerServiceServer(srv, &relay{client: &recordingWorkerService{}})
+	workerservicepb.RegisterWorkerServiceServer(srv, &relay{client: &recordingWorkerService{}})
 	go func() { _ = srv.Serve(lis) }()
 	defer srv.Stop()
 
@@ -117,7 +117,7 @@ func TestRelayTLSAdmitsOnlyTheAllowedID(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer conn.Close()
-		_, err = ateapipb.NewWorkerServiceClient(conn).RegisterWorker(context.Background(), report())
+		_, err = workerservicepb.NewWorkerServiceClient(conn).RegisterWorker(context.Background(), report())
 		return err
 	}
 	if err := call(ca.Issue(t, allowed)); err != nil {
@@ -146,7 +146,7 @@ func TestRelayTLSFollowsATrustBundleRotation(t *testing.T) {
 		t.Fatal(err)
 	}
 	srv := grpc.NewServer(grpc.Creds(credentials.NewTLS(serverCfg)))
-	ateapipb.RegisterWorkerServiceServer(srv, &relay{client: &recordingWorkerService{}})
+	workerservicepb.RegisterWorkerServiceServer(srv, &relay{client: &recordingWorkerService{}})
 	go func() { _ = srv.Serve(lis) }()
 	defer srv.Stop()
 
@@ -160,7 +160,7 @@ func TestRelayTLSFollowsATrustBundleRotation(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	if _, err := ateapipb.NewWorkerServiceClient(conn).RegisterWorker(context.Background(), report()); err != nil {
+	if _, err := workerservicepb.NewWorkerServiceClient(conn).RegisterWorker(context.Background(), report()); err != nil {
 		t.Errorf("a certificate from the rotated-in CA was refused: %v", err)
 	}
 }

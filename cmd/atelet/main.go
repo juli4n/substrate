@@ -59,6 +59,7 @@ import (
 	"go.ate.dev/substrate/internal/preview"
 	"go.ate.dev/substrate/internal/proto/ateletpb"
 	"go.ate.dev/substrate/internal/proto/ateworkerpb"
+	"go.ate.dev/substrate/internal/proto/workerservicepb"
 	"go.ate.dev/substrate/internal/resources"
 	"go.ate.dev/substrate/internal/serverboot"
 	"go.ate.dev/substrate/internal/substratex509"
@@ -367,7 +368,7 @@ func main() {
 		serverboot.Fatal(ctx, "Failed to create ateapi client", err)
 	}
 	defer ateapiConn.Close()
-	workerService := ateapipb.NewWorkerServiceClient(ateapiConn)
+	workerService := workerservicepb.NewWorkerServiceClient(ateapiConn)
 
 	// The snapshot tracker's workers get a context of their own, cancelled only
 	// once the gRPC server has drained, so background snapshot work keeps

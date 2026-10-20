@@ -20,27 +20,27 @@ import (
 	"fmt"
 	"log/slog"
 
-	"go.ate.dev/substrate/cmd/ateapi/internal/apivalidation"
 	"go.ate.dev/substrate/cmd/ateapi/internal/ateletauth"
 	"go.ate.dev/substrate/cmd/ateapi/internal/store"
 	"go.ate.dev/substrate/internal/apierror"
+	"go.ate.dev/substrate/internal/proto/workerservicepb"
 	"go.ate.dev/substrate/internal/resources"
 	"go.ate.dev/substrate/pkg/proto/ateapipb"
 )
 
 // RequestActorSuspend suspends an Actor on behalf of the Worker hosting it. The
 // caller must be an atelet running on the Worker's node.
-func (s *Server) RequestActorSuspend(ctx context.Context, req *ateapipb.RequestActorSuspendRequest) (*ateapipb.RequestActorSuspendResponse, error) {
+func (s *Server) RequestActorSuspend(ctx context.Context, req *workerservicepb.RequestActorSuspendRequest) (*workerservicepb.RequestActorSuspendResponse, error) {
 	caller, err := ateletauth.Authenticate(ctx, s.ateletSPIFFEID)
 	if err != nil {
 		return nil, err
 	}
-	if errs := apivalidation.ValidateRequestActorSuspendRequest(ctx, req); len(errs) > 0 {
+	if errs := validateRequestActorSuspendRequest(ctx, req); len(errs) > 0 {
 		return nil, resources.ToAPIError(errs)
 	}
 
 	workerName := req.GetWorker().GetName()
-	actorRef := resources.ActorRefFromObjectRef(req.GetActor())
+	actorRef := actorRefFromObjectRef(req.GetActor())
 	if err := s.authorizeHostedActor(ctx, caller, workerName, actorRef, req.GetActorUid()); err != nil {
 		return nil, err
 	}
@@ -55,8 +55,9 @@ func (s *Server) RequestActorSuspend(ctx context.Context, req *ateapipb.RequestA
 	// the workflow to acquire the lease, the Actor can be resumed onto another
 	// Worker, or deleted and recreated under the same name, and the workflow
 	// suspends whatever the reference resolves to by then. See #1773.
-	resp, err := s.control.SuspendActor(ctx, &ateapipb.SuspendActorRequest{Actor: req.GetActor()})
-	if err != nil {
+	if _, err := s.control.SuspendActor(ctx, &ateapipb.SuspendActorRequest{
+		Actor: &ateapipb.ObjectRef{Atespace: actorRef.Atespace, Name: actorRef.Name},
+	}); err != nil {
 		return nil, err
 	}
 	slog.InfoContext(ctx, "Worker requested an actor suspend",
@@ -64,7 +65,7 @@ func (s *Server) RequestActorSuspend(ctx context.Context, req *ateapipb.RequestA
 		slog.String("actor", actorRef.String()),
 		slog.String("actor_uid", req.GetActorUid()),
 		slog.String("node", caller.NodeName))
-	return &ateapipb.RequestActorSuspendResponse{Actor: resp.GetActor()}, nil
+	return &workerservicepb.RequestActorSuspendResponse{}, nil
 }
 
 // authorizeHostedActor checks that the calling atelet may speak for actorRef:

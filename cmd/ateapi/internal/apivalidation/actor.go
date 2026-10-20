@@ -88,16 +88,6 @@ func ValidateMintActorCertificateRequest(ctx context.Context, req *ateapipb.Mint
 	return Validate_MintActorCertificateRequest(ctx, op, nil, req, nil)
 }
 
-func ValidateMintWorkerActorCertificateRequest(ctx context.Context, req *ateapipb.MintWorkerActorCertificateRequest) field.ErrorList {
-	op := MakeCreateOp(ctx)
-	return Validate_MintWorkerActorCertificateRequest(ctx, op, nil, req, nil)
-}
-
-func ValidateMintWorkerActorJwtRequest(ctx context.Context, req *ateapipb.MintWorkerActorJwtRequest) field.ErrorList {
-	op := operation.Operation{Type: operation.Create}
-	return Validate_MintWorkerActorJwtRequest(ctx, op, nil, req, nil)
-}
-
 func ValidateActorUpdate(ctx context.Context, fldPath *field.Path, newVal, oldVal *ateapipb.Actor, requireStatus bool) field.ErrorList {
 	// Call the generated validation.
 	op := MakeUpdateOp(ctx)

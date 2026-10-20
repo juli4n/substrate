@@ -20,13 +20,13 @@ import (
 	"log/slog"
 
 	"go.ate.dev/substrate/cmd/benchmarking/isolate/internal/fakeworker"
-	"go.ate.dev/substrate/pkg/proto/ateapipb"
+	"go.ate.dev/substrate/internal/proto/workerservicepb"
 	"google.golang.org/grpc"
 )
 
-// capacityClient is the part of ateapipb.WorkerServiceClient the relay uses.
+// capacityClient is the part of workerservicepb.WorkerServiceClient the relay uses.
 type capacityClient interface {
-	RegisterWorker(ctx context.Context, in *ateapipb.RegisterWorkerRequest, opts ...grpc.CallOption) (*ateapipb.RegisterWorkerResponse, error)
+	RegisterWorker(ctx context.Context, in *workerservicepb.RegisterWorkerRequest, opts ...grpc.CallOption) (*workerservicepb.RegisterWorkerResponse, error)
 }
 
 // relay forwards fake-workersync's capacity reports to ate-api-server under
@@ -39,12 +39,12 @@ type capacityClient interface {
 // It serves WorkerService so the request and ate-api-server's status pass
 // through unchanged; every other WorkerService call is Unimplemented.
 type relay struct {
-	ateapipb.UnimplementedWorkerServiceServer
+	workerservicepb.UnimplementedWorkerServiceServer
 
 	client capacityClient
 }
 
-func (r *relay) RegisterWorker(ctx context.Context, in *ateapipb.RegisterWorkerRequest) (*ateapipb.RegisterWorkerResponse, error) {
+func (r *relay) RegisterWorker(ctx context.Context, in *workerservicepb.RegisterWorkerRequest) (*workerservicepb.RegisterWorkerResponse, error) {
 	resp, err := r.client.RegisterWorker(ctx, in)
 	if err != nil {
 		slog.WarnContext(ctx, "Capacity report rejected",

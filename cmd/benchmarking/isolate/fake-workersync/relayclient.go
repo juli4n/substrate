@@ -25,7 +25,7 @@ import (
 
 	"go.ate.dev/substrate/cmd/benchmarking/isolate/internal/fakeworker"
 	"go.ate.dev/substrate/internal/credbundle"
-	"go.ate.dev/substrate/pkg/proto/ateapipb"
+	"go.ate.dev/substrate/internal/proto/workerservicepb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 )
@@ -87,14 +87,14 @@ func newGRPCRelay(clientBundlePath, trustBundlePath, ateletID string) (*grpcRela
 }
 
 // Report sends req to the relay at addr (host:port).
-func (g *grpcRelay) Report(ctx context.Context, addr string, req *ateapipb.RegisterWorkerRequest) error {
+func (g *grpcRelay) Report(ctx context.Context, addr string, req *workerservicepb.RegisterWorkerRequest) error {
 	conn, err := g.conn(addr)
 	if err != nil {
 		return err
 	}
 	ctx, cancel := context.WithTimeout(ctx, reportTimeout)
 	defer cancel()
-	_, err = ateapipb.NewWorkerServiceClient(conn).RegisterWorker(ctx, req)
+	_, err = workerservicepb.NewWorkerServiceClient(conn).RegisterWorker(ctx, req)
 	return err
 }
 
