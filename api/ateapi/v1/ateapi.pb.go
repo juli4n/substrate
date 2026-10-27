@@ -37,15 +37,16 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-// SnapshotOwner indicates the owner of a snapshot.
+// SnapshotOwner indicates the resource that owns a snapshot in object storage.
 type SnapshotOwner int32
 
 const (
+	// Default value. Not a valid snapshot owner.
 	SnapshotOwner_SNAPSHOT_OWNER_UNSPECIFIED SnapshotOwner = 0
-	// Snapshot captured directly from this Actor.
+	// Snapshot captured directly from and owned by this Actor.
 	SnapshotOwner_SNAPSHOT_OWNER_ACTOR SnapshotOwner = 1
-	// Snapshot owned by a Tag (also includes Golden Snapshot)
-	SnapshotOwner_SNAPSHOT_OWNER_TAG SnapshotOwner = 2 // Keep this in sync with Snapshot.owner's maximum.
+	// Snapshot owned by a Tag, including a template's golden snapshot Tag.
+	SnapshotOwner_SNAPSHOT_OWNER_TAG SnapshotOwner = 2 // (-- Keep this in sync with Snapshot.owner's maximum. --)
 )
 
 // Enum value maps for SnapshotOwner.
@@ -89,15 +90,17 @@ func (SnapshotOwner) EnumDescriptor() ([]byte, []int) {
 	return file_api_ateapi_v1_ateapi_proto_rawDescGZIP(), []int{0}
 }
 
-// SnapshotStorageState indicates the lifecycle stage of a durable snapshot.
+// SnapshotStorageState indicates the lifecycle stage of a durable snapshot in
+// object storage.
 type SnapshotStorageState int32
 
 const (
+	// Default value. Not a valid storage state.
 	SnapshotStorageState_SNAPSHOT_STORAGE_STATE_UNSPECIFIED SnapshotStorageState = 0
-	// Snapshot creation in durable storage is in progress.
+	// Snapshot upload or copy in durable storage is in progress.
 	SnapshotStorageState_SNAPSHOT_STORAGE_STATE_PENDING SnapshotStorageState = 1
-	// Snapshot is complete and ready for use in durable storage.
-	SnapshotStorageState_SNAPSHOT_STORAGE_STATE_COMPLETED SnapshotStorageState = 2 // Keep this in sync with SnapshotStorage.state's maximum.
+	// Snapshot is complete in durable storage and ready for use.
+	SnapshotStorageState_SNAPSHOT_STORAGE_STATE_COMPLETED SnapshotStorageState = 2 // (-- Keep this in sync with SnapshotStorage.state's maximum. --)
 )
 
 // Enum value maps for SnapshotStorageState.
@@ -146,16 +149,17 @@ func (SnapshotStorageState) EnumDescriptor() ([]byte, []int) {
 type SnapshotFidelity int32
 
 const (
+	// Default value, treated as `MEMORY` in SnapshotConfig.
 	SnapshotFidelity_SNAPSHOT_FIDELITY_UNSPECIFIED SnapshotFidelity = 0
-	// Durable volumes only. The actor resumes by cold-booting its containers
-	// from the OCI image with the volumes restored.
+	// Durable volumes only. The actor resumes by booting its containers from the
+	// OCI image with the volumes restored.
 	SnapshotFidelity_SNAPSHOT_FIDELITY_VOLUMES SnapshotFidelity = 1
-	// Volumes plus the root filesystem changes made since boot. The actor
-	// cold-boots on resume with its rootfs writes back in place.
+	// Volumes plus the root filesystem changes made since boot. The actor boots
+	// on resume with its rootfs writes back in place.
 	SnapshotFidelity_SNAPSHOT_FIDELITY_ROOTFS SnapshotFidelity = 2
 	// Volumes, root filesystem changes, and process memory. The actor resumes
-	// where it left off.
-	SnapshotFidelity_SNAPSHOT_FIDELITY_MEMORY SnapshotFidelity = 3 // Keep this in sync with the maximums on fields of this type.
+	// execution where it left off.
+	SnapshotFidelity_SNAPSHOT_FIDELITY_MEMORY SnapshotFidelity = 3 // (-- Keep this in sync with the maximums on fields of this type. --)
 )
 
 // Enum value maps for SnapshotFidelity.
@@ -201,10 +205,11 @@ func (SnapshotFidelity) EnumDescriptor() ([]byte, []int) {
 	return file_api_ateapi_v1_ateapi_proto_rawDescGZIP(), []int{2}
 }
 
+// TagScope controls which Atespaces can create Actors from a Tag.
 type TagScope int32
 
 const (
-	// Not set and rejected wherever a client supplies a scope
+	// Default value, rejected on input.
 	TagScope_TAG_SCOPE_UNSPECIFIED TagScope = 0
 	// May initialize Actors only in the tag's owning Atespace.
 	TagScope_TAG_SCOPE_ATESPACE TagScope = 1
@@ -254,17 +259,40 @@ func (TagScope) EnumDescriptor() ([]byte, []int) {
 	return file_api_ateapi_v1_ateapi_proto_rawDescGZIP(), []int{3}
 }
 
+// ActorState represents the lifecycle state of an Actor.
 type ActorState int32
 
 const (
+	// Default value. Not a valid actor state.
 	ActorState_ACTOR_STATE_UNSPECIFIED ActorState = 0
-	ActorState_ACTOR_STATE_RESUMING    ActorState = 1
-	ActorState_ACTOR_STATE_RUNNING     ActorState = 2
-	ActorState_ACTOR_STATE_SUSPENDING  ActorState = 3
-	ActorState_ACTOR_STATE_SUSPENDED   ActorState = 4
-	ActorState_ACTOR_STATE_CRASHED     ActorState = 5
-	ActorState_ACTOR_STATE_DELETING    ActorState = 6
-	ActorState_ACTOR_STATE_REVERTING   ActorState = 7 // Keep this in sync with ActorStatus.state's maximum.
+	// Transitional state while ResumeActor schedules the actor onto a Worker,
+	// restores its snapshot or boots its containers, and waits for container
+	// wakeup probes to succeed.
+	ActorState_ACTOR_STATE_RESUMING ActorState = 1
+	// The actor's containers are running on the Worker recorded in
+	// `status.worker_assignment` and ready to serve traffic.
+	ActorState_ACTOR_STATE_RUNNING ActorState = 2
+	// Transitional state while SuspendActor checkpoints the actor's state on its
+	// Worker and releases the Worker assignment.
+	ActorState_ACTOR_STATE_SUSPENDING ActorState = 3
+	// The actor is at rest with no assigned Worker. Its state is preserved in
+	// `status.snapshots` (or it awaits its first boot), and it can be resumed
+	// with ResumeActor, updated to a new ActorTemplate with UpdateActor, or
+	// tagged with CreateTag once it holds a snapshot (uploading a node-local
+	// snapshot first if needed).
+	ActorState_ACTOR_STATE_SUSPENDED ActorState = 4
+	// The actor encountered an unrecoverable failure while running, resuming,
+	// suspending, or reverting, or a control-plane record conflict. Failure
+	// details are recorded in `status.crash`. Call RevertActor to return the
+	// actor to `SUSPENDED` at its last durable snapshot before calling
+	// ResumeActor.
+	ActorState_ACTOR_STATE_CRASHED ActorState = 5
+	// Transitional state while DeleteActor terminates the workload and cleans up
+	// volumes and snapshots before removing the Actor record.
+	ActorState_ACTOR_STATE_DELETING ActorState = 6
+	// Transitional state while RevertActor discards active or local node state
+	// and returns the actor to `SUSPENDED` at its last durable snapshot.
+	ActorState_ACTOR_STATE_REVERTING ActorState = 7 // (-- Keep this in sync with ActorStatus.state's maximum. --)
 )
 
 // Enum value maps for ActorState.
@@ -318,13 +346,19 @@ func (ActorState) EnumDescriptor() ([]byte, []int) {
 	return file_api_ateapi_v1_ateapi_proto_rawDescGZIP(), []int{4}
 }
 
-// GoldenSnapshotMode selects whether a template builds a golden snapshot.
+// GoldenSnapshotMode selects whether an ActorTemplate builds a golden snapshot.
 type GoldenSnapshotMode int32
 
 const (
+	// Default value, treated as `ENABLED`.
 	GoldenSnapshotMode_GOLDEN_SNAPSHOT_MODE_UNSPECIFIED GoldenSnapshotMode = 0
-	GoldenSnapshotMode_GOLDEN_SNAPSHOT_MODE_ENABLED     GoldenSnapshotMode = 1
-	GoldenSnapshotMode_GOLDEN_SNAPSHOT_MODE_DISABLED    GoldenSnapshotMode = 2
+	// Automatically boot a temporary golden Actor in the background, wait for
+	// readiness, and capture a golden snapshot Tag to accelerate initial Actor
+	// resumes.
+	GoldenSnapshotMode_GOLDEN_SNAPSHOT_MODE_ENABLED GoldenSnapshotMode = 1
+	// Skip building a golden snapshot. Actors created from this template without
+	// a `source_tag` boot from the container image on their first resume.
+	GoldenSnapshotMode_GOLDEN_SNAPSHOT_MODE_DISABLED GoldenSnapshotMode = 2
 )
 
 // Enum value maps for GoldenSnapshotMode.
@@ -368,14 +402,19 @@ func (GoldenSnapshotMode) EnumDescriptor() ([]byte, []int) {
 	return file_api_ateapi_v1_ateapi_proto_rawDescGZIP(), []int{5}
 }
 
-// ActorMetadataField selects one identity field of the actor.
+// ActorMetadataField selects an identity field of the Actor to project into a
+// `system_info` volume.
 type ActorMetadataField int32
 
 const (
+	// Default value, rejected on input.
 	ActorMetadataField_ACTOR_METADATA_FIELD_UNSPECIFIED ActorMetadataField = 0
-	ActorMetadataField_ACTOR_METADATA_FIELD_NAME        ActorMetadataField = 1
-	ActorMetadataField_ACTOR_METADATA_FIELD_ATESPACE    ActorMetadataField = 2
-	ActorMetadataField_ACTOR_METADATA_FIELD_UID         ActorMetadataField = 3 // Keep this in sync with ActorMetadataItem.field's maximum.
+	// The Actor's `metadata.name`.
+	ActorMetadataField_ACTOR_METADATA_FIELD_NAME ActorMetadataField = 1
+	// The Actor's `metadata.atespace`.
+	ActorMetadataField_ACTOR_METADATA_FIELD_ATESPACE ActorMetadataField = 2
+	// The Actor's `metadata.uid`.
+	ActorMetadataField_ACTOR_METADATA_FIELD_UID ActorMetadataField = 3 // (-- Keep this in sync with ActorMetadataItem.field's maximum. --)
 )
 
 // Enum value maps for ActorMetadataField.
@@ -421,20 +460,23 @@ func (ActorMetadataField) EnumDescriptor() ([]byte, []int) {
 	return file_api_ateapi_v1_ateapi_proto_rawDescGZIP(), []int{6}
 }
 
-// DurabilityMode selects when a suspend is acknowledged relative to its
-// snapshot being stored durably.
+// DurabilityMode selects when SuspendActor returns relative to the Actor's
+// snapshot reaching durable object storage.
 type DurabilityMode int32
 
 const (
+	// Default value, treated as `ASYNCHRONOUS` in SuspendOptions.
 	DurabilityMode_DURABILITY_MODE_UNSPECIFIED DurabilityMode = 0
-	// Return only after the snapshot is complete in durable storage. Applies
-	// only when the call checkpoints a running actor: an actor that is already
-	// SUSPENDED is returned with the snapshot it holds, which may still be on
-	// its node.
+	// Return only after the snapshot is uploaded to durable object storage
+	// (`COMPLETED`). Applies when the call checkpoints a `RUNNING` or
+	// `SUSPENDING` actor; an already `SUSPENDED` actor is returned unchanged.
 	DurabilityMode_DURABILITY_MODE_SYNCHRONOUS DurabilityMode = 1
-	// Return once the snapshot is captured on the node. The upload to durable
-	// storage continues in the background.
-	DurabilityMode_DURABILITY_MODE_ASYNCHRONOUS DurabilityMode = 2 // Keep this in sync with SuspendOptions.mode's maximum.
+	// Return as soon as the snapshot is captured on local node disk while the
+	// upload to object storage continues in the background. While the local
+	// snapshot remains on the node (until `atelet` detaches it, or ResumeActor
+	// detaches it because no Worker on the node can take the Actor),
+	// `status.assigned_node` keeps ResumeActor on that node.
+	DurabilityMode_DURABILITY_MODE_ASYNCHRONOUS DurabilityMode = 2 // (-- Keep this in sync with SuspendOptions.mode's maximum. --)
 )
 
 // Enum value maps for DurabilityMode.
@@ -478,18 +520,20 @@ func (DurabilityMode) EnumDescriptor() ([]byte, []int) {
 	return file_api_ateapi_v1_ateapi_proto_rawDescGZIP(), []int{7}
 }
 
+// WorkerState represents the scheduling availability state of a Worker.
 type WorkerState int32
 
 const (
+	// Default value, not a valid worker state.
 	WorkerState_WORKER_STATE_UNSPECIFIED WorkerState = 0
-	// Ready; schedulable.
+	// Ready and eligible to have new Actors scheduled onto it once the Worker
+	// process has registered an epoch and reported its `sandbox_classes`.
 	WorkerState_WORKER_STATE_ACTIVE WorkerState = 1
-	// Pod terminating. Not schedulable. Final: a draining Worker never becomes
-	// active or unavailable again.
+	// Draining and permanently ineligible for new Actor placements.
 	WorkerState_WORKER_STATE_DRAINING WorkerState = 2
-	// Registered but not Ready, or its the worker restarting. Not schedulable. Every
-	// Worker starts here until MarkWorkerAvailable.
-	WorkerState_WORKER_STATE_UNAVAILABLE WorkerState = 3 // Keep this in sync with WorkerStatus.state's maximum.
+	// Newly created or not Ready. Ineligible for new Actor placements until
+	// MarkWorkerAvailable is called.
+	WorkerState_WORKER_STATE_UNAVAILABLE WorkerState = 3 // (-- Keep this in sync with WorkerStatus.state's maximum. --)
 )
 
 // Enum value maps for WorkerState.
@@ -535,15 +579,17 @@ func (WorkerState) EnumDescriptor() ([]byte, []int) {
 	return file_api_ateapi_v1_ateapi_proto_rawDescGZIP(), []int{8}
 }
 
-// Scope is whether a top-level resource belongs to an atespace.
+// Scope indicates whether a top level resource is scoped to an Atespace or
+// global to the installation.
 type Scope int32
 
 const (
-	// The scope is not set.
+	// Default value, used on subresources that inherit their parent's scope.
 	Scope_SCOPE_UNSPECIFIED Scope = 0
-	// The resource belongs to an atespace, identified by (atespace, name).
+	// Resource belongs to an Atespace and is identified by (`atespace`, `name`).
 	Scope_SCOPE_ATESPACE Scope = 1
-	// The resource belongs to no atespace, identified by its name alone.
+	// Resource is installation wide and is identified by `name` alone (`atespace`
+	// is empty).
 	Scope_SCOPE_GLOBAL Scope = 2
 )
 
@@ -591,7 +637,7 @@ func (Scope) EnumDescriptor() ([]byte, []int) {
 // ObjectSnapshot addresses a snapshot held in object storage.
 type ObjectSnapshot struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// snapshot_uri addresses the snapshot's prefix in object storage.
+	// Prefix URI of the snapshot in object storage.
 	//
 	// +k8s:required
 	// +k8s:maxLength=2048 # the template's storage_location bound plus the owner prefix and snapshot name
@@ -640,13 +686,13 @@ func (x *ObjectSnapshot) GetSnapshotUri() string {
 // SnapshotStorage records the durable storage representation of a Snapshot.
 type SnapshotStorage struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// state is the lifecycle state of the durable snapshot.
+	// Lifecycle state of the durable snapshot.
 	//
 	// +k8s:required
 	// +k8s:minimum=1
 	// +k8s:maximum=2 # keep this in sync with the SnapshotStorageState enum
 	State SnapshotStorageState `protobuf:"varint,1,opt,name=state,proto3,enum=substrate.ateapi.v1.SnapshotStorageState" json:"state,omitempty"`
-	// object snapshot is stored in object storage.
+	// Object storage location of the snapshot.
 	//
 	// +k8s:required
 	Object        *ObjectSnapshot `protobuf:"bytes,2,opt,name=object,proto3" json:"object,omitempty"`
@@ -701,26 +747,26 @@ func (x *SnapshotStorage) GetObject() *ObjectSnapshot {
 // Snapshot represents one generation of an Actor's or Tag's snapshot state.
 type Snapshot struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// uuid is the server-generated unique identifier for this snapshot, passed to
-	// atelet to identify the local checkpoint on disk and used as the snapshot
-	// name in object storage.
+	// Unique identifier generated by the server for this snapshot.
+	//
+	// Identifies the local checkpoint on node disk and the snapshot name in
+	// object storage.
 	//
 	// +k8s:required
 	// +k8s:format=k8s-short-name
 	Uuid string `protobuf:"bytes,1,opt,name=uuid,proto3" json:"uuid,omitempty"`
-	// generation is the monotonically increasing generation number of this
-	// snapshot, starting at 1.
+	// Monotonically increasing generation number of this snapshot, starting at 1.
 	//
 	// +k8s:required
 	// +k8s:minimum=1
 	Generation int32 `protobuf:"varint,2,opt,name=generation,proto3" json:"generation,omitempty"`
-	// owner identifies the origin and ownership of this snapshot.
+	// Resource that owns this snapshot's underlying storage.
 	//
 	// +k8s:required
 	// +k8s:minimum=1
 	// +k8s:maximum=2 # keep this in sync with the SnapshotOwner enum
 	Owner SnapshotOwner `protobuf:"varint,3,opt,name=owner,proto3,enum=substrate.ateapi.v1.SnapshotOwner" json:"owner,omitempty"`
-	// fidelity is what this snapshot holds.
+	// State layers captured in this snapshot.
 	//
 	// +k8s:required
 	// +k8s:minimum=1
@@ -729,24 +775,32 @@ type Snapshot struct {
 	// UID of the ActorTemplate whose sandbox this snapshot's guest state was
 	// captured from.
 	//
+	// Populated on Actor-held snapshots (`ActorStatus.snapshots`) and empty on a
+	// Tag's snapshot (`TagStatus.snapshot`, where `TagStatus.actor_template_uid`
+	// holds the template UID).
+	//
 	// +k8s:optional
 	// +k8s:format=k8s-uuid
 	ActorTemplateUid string `protobuf:"bytes,5,opt,name=actor_template_uid,json=actorTemplateUid,proto3" json:"actor_template_uid,omitempty"`
-	// locality identifies the Kubernetes node holding this snapshot's files.
-	// Detach, revert, or a later checkpoint clears it. Resume keeps the files.
+	// Node holding this snapshot's local files.
+	//
+	// While set, ResumeActor keeps the actor on this node while it has room so
+	// the actor restores from local disk (detaching and placing elsewhere if no
+	// Worker on the node can take it). Cleared on revert, detach, or when a newer
+	// snapshot replaces it.
 	//
 	// +k8s:optional
 	// +k8s:format=k8s-long-name
 	Locality string `protobuf:"bytes,6,opt,name=locality,proto3" json:"locality,omitempty"`
-	// durable_snapshot holds the durable storage representation of this snapshot.
-	// PENDING while the snapshot is uploaded, including an asynchronous suspend's
-	// snapshot that so far exists only on the node named by locality. COMPLETED
-	// once the upload is recorded.
+	// Durable object storage representation of this snapshot.
+	//
+	// `PENDING` while the snapshot is being uploaded, including an asynchronous
+	// suspend's snapshot that so far exists only on the node named by `locality`.
+	// `COMPLETED` once the upload is recorded.
 	//
 	// +k8s:optional
 	DurableSnapshot *SnapshotStorage `protobuf:"bytes,7,opt,name=durable_snapshot,json=durableSnapshot,proto3" json:"durable_snapshot,omitempty"`
-	// sandbox_runtime is the runtime the actor ran under when the snapshot was
-	// taken.
+	// Sandbox runtime the actor ran under when the snapshot was taken.
 	//
 	// +k8s:optional
 	SandboxRuntime *ActorSandboxRuntime `protobuf:"bytes,8,opt,name=sandbox_runtime,json=sandboxRuntime,proto3" json:"sandbox_runtime,omitempty"`
@@ -840,11 +894,11 @@ func (x *Snapshot) GetSandboxRuntime() *ActorSandboxRuntime {
 	return nil
 }
 
-// Selector matches worker pools by label.
-// Only equality-based matching is supported.
+// Selector matches WorkerPools by label.
+// Only equality matching is supported.
 type Selector struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// match_labels selects by exact equality on a set of labels.
+	// Labels that a WorkerPool must match by exact key and value equality.
 	//
 	// +k8s:optional
 	// +k8s:unionMember
@@ -894,64 +948,77 @@ func (x *Selector) GetMatchLabels() map[string]string {
 	return nil
 }
 
-// ResourceMetadata holds the common fields carried by every Substrate resource.
+// ResourceMetadata holds the common identity, concurrency, and timestamp fields
+// carried by every Substrate resource.
 //
 // +k8s:customValidation # timestamps must be valid, and update_time must not precede create_time
 type ResourceMetadata struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// atespace is the namespace the resource belongs to. Empty for global-scoped
-	// resources. Caller-specified at creation and immutable thereafter.
+	// Atespace the resource belongs to, or empty for global resources.
 	//
+	// Set by the caller at creation and immutable thereafter.
+	//
+	// (--
 	// Atespaced resources should add `+k8s:subfield(atespace)=+k8s:required`
-	// Non-atespaced resources should add `+k8s:subfield(atespace)=+k8s:forbidden`
+	// Global resources should add `+k8s:subfield(atespace)=+k8s:forbidden`
+	// --)
+	//
 	// +k8s:optional
 	// +k8s:format=k8s-short-name
 	// +k8s:immutable
 	Atespace string `protobuf:"bytes,1,opt,name=atespace,proto3" json:"atespace,omitempty"`
-	// name is the resource's name, unique within its atespace (or globally, for
-	// global-scoped resources). Caller-specified at creation and immutable thereafter.
+	// Name of the resource, unique within its Atespace (or globally for global
+	// resources).
+	//
+	// Set by the caller at creation and immutable thereafter.
 	//
 	// +k8s:required
 	// +k8s:format=k8s-short-name
 	// +k8s:immutable
 	Name string `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
-	// uid is a server-assigned, globally unique identifier for this resource.
-	// Immutable throughout the lifecycle of the resource.
+	// Globally unique UUID assigned by the server for this resource incarnation.
 	//
-	// This field is ignored during create operations and used as precondition
-	// for update operations.
+	// Ignored on create. Required on update requests (and optional on delete via
+	// `DeleteOptions.uid`) for optimistic locking: the server verifies that the
+	// stored resource still has this `uid` so an update or delete against a
+	// resource that was deleted and recreated under the same name fails with
+	// `ABORTED`.
 	//
 	// +k8s:optional
 	// +k8s:format=k8s-uuid
 	// +k8s:immutable
 	Uid string `protobuf:"bytes,3,opt,name=uid,proto3" json:"uid,omitempty"`
-	// version is increased on every mutation.
+	// Revision number managed by the server and incremented on every mutation,
+	// starting at 1.
 	//
-	// This field is ignored during create operations and used as precondition
-	// for update operations.
+	// Ignored on create. Required on update requests (and optional on delete via
+	// `DeleteOptions.version`) for optimistic locking: callers read the resource,
+	// modify it, and send back the `version` they read. If a concurrent write
+	// incremented the stored `version` in the meantime, the server rejects the
+	// request with `ABORTED` so the caller can read the latest state and retry
+	// without overwriting concurrent changes.
 	//
 	// +k8s:optional
 	// +k8s:alpha(since: "0.0")=+k8s:monotonic # TODO: get rid of alpha prefix
 	// +k8s:minimum=1
 	// +k8s:update=NoUnset
 	Version int64 `protobuf:"varint,4,opt,name=version,proto3" json:"version,omitempty"`
-	// create_time is the time the resource was created.
-	//
-	// This field is ignored on input.
+	// Timestamp assigned by the server when the resource was created. Ignored on
+	// input.
 	//
 	// +k8s:optional
 	// +k8s:immutable
 	CreateTime *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=create_time,json=createTime,proto3" json:"create_time,omitempty"`
-	// update_time is the time the resource was last updated.
-	//
-	// This field is ignored on input.
+	// Timestamp assigned by the server when the resource was last modified.
+	// Ignored on input.
 	//
 	// +k8s:optional
 	// +k8s:update=NoUnset
 	UpdateTime *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=update_time,json=updateTime,proto3" json:"update_time,omitempty"`
-	// delete_time is the time the resource started its deletion.
+	// Timestamp assigned by the server when deletion of the resource began.
 	//
-	// This field is ignored on input.
+	// Set while a delete workflow is in progress and on the resource returned by
+	// Delete RPCs. Ignored on input.
 	//
 	// +k8s:optional
 	// +k8s:update=NoModify
@@ -1040,12 +1107,13 @@ func (x *ResourceMetadata) GetDeleteTime() *timestamppb.Timestamp {
 	return nil
 }
 
-// ExternalVolumes is the external volume state recorded on an actor, wrapped
-// so later additions do not reshape ActorStatus.
+// ExternalVolumes holds the external volume state recorded on an Actor.
+//
+// (-- Wrapped in a message so later additions do not reshape ActorStatus. --)
 type ExternalVolumes struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// volumes has one entry per external volume of the template. Each template
-	// volume appears at most once.
+	// External volumes declared for the actor, with one entry per external volume
+	// defined in the ActorTemplate.
 	//
 	// +k8s:optional
 	// +k8s:maxItems=32 # matches the template's volumes bound
@@ -1093,24 +1161,26 @@ func (x *ExternalVolumes) GetVolumes() []*ExternalVolumeStatus {
 	return nil
 }
 
-// ExternalVolumeStatus is one actor's view of an external volume it mounts.
+// ExternalVolumeStatus records the provisioning state of one CSI external
+// volume declared for an Actor.
 type ExternalVolumeStatus struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Name of the volume specified in the actor template. Template volume
-	// names are DNS labels.
+	// Name of the volume as declared in the ActorTemplate.
+	//
+	// (-- Set once. Immutable would reject the create ratchet when the final object is validated as an update. --)
 	//
 	// +k8s:required
 	// +k8s:format=k8s-short-name
 	// +k8s:update=NoModify
-	// +k8s:update=NoUnset # set-once; immutable would reject the create
-	// ratchet's nil->set when the final object is validated as an update
+	// +k8s:update=NoUnset
 	Name string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
-	// The globally unique volume_id returned from the storage system.
-	// This will be initially empty during volume creation. Its format is the
-	// storage system's own, so it is only bounded and checked for control
-	// characters (U+0000-U+0008, U+000B, U+000C, U+000E-U+001F, U+007F-U+009F).
-	// The CSI spec caps IDs at 128 bytes but does not require it, so allow
-	// some slack. Set once when provisioning completes, then never changed.
+	// Globally unique volume handle returned by the storage system when
+	// provisioning completes.
+	//
+	// Empty until provisioning completes on resume, then set once and never
+	// changed.
+	//
+	// (-- Its format is the storage system's own, so it is only bounded and checked for control characters. The CSI spec caps IDs at 128 bytes but does not require it, so allow some slack. --)
 	//
 	// +k8s:optional
 	// +k8s:maxLength=256
@@ -1118,9 +1188,9 @@ type ExternalVolumeStatus struct {
 	// +k8s:update=NoUnset
 	// +k8s:customValidation # no control characters
 	StorageVolumeId string `protobuf:"bytes,2,opt,name=storage_volume_id,json=storageVolumeId,proto3" json:"storage_volume_id,omitempty"`
-	// Internal volume plugin name or CSI driver name, from the StorageClass
-	// provisioner. Must be a DNS subdomain, optionally prefixed with
-	// "substrate.io/" (per the CSI spec's driver-name syntax).
+	// CSI driver name from the StorageClass provisioner.
+	//
+	// Must be a DNS subdomain, optionally prefixed with `substrate.io/`.
 	//
 	// +k8s:required
 	// +k8s:maxLength=253
@@ -1128,10 +1198,8 @@ type ExternalVolumeStatus struct {
 	// +k8s:update=NoUnset # set-once, like name above
 	// +k8s:customValidation
 	VolumeType string `protobuf:"bytes,3,opt,name=volume_type,json=volumeType,proto3" json:"volume_type,omitempty"`
-	// volume_context contains metadata returned by the CSI driver during volume
-	// provisioning, needed by the node plugin for mounting (e.g. attachment
-	// info). Keys and values are the driver's own, so the map is only bounded,
-	// not validated.
+	// Driver metadata returned by the CSI driver during provisioning and passed
+	// to the node plugin on mount.
 	//
 	// +k8s:optional
 	// +k8s:customValidation # at most 40 KiB in total, ten times the CSI limit for map fields
@@ -1198,36 +1266,54 @@ func (x *ExternalVolumeStatus) GetVolumeContext() map[string]string {
 	return nil
 }
 
+// Actor is a stateful workload with a stable identity that can be suspended to
+// a snapshot when idle and resumed onto a Worker on demand.
+//
+// An Actor is created from an ActorTemplate (and seeded from `source_tag` or,
+// when unset, from the template's golden Tag if one exists), starts in
+// `SUSPENDED` state, and transitions between `RUNNING` and `SUSPENDED` via
+// ResumeActor and SuspendActor.
 type Actor struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Common resource metadata: atespace, name, uid, version, timestamps.
+	// Standard resource metadata.
+	//
+	// `atespace` and `name` are set by the caller on create and are immutable.
+	// `uid`, `version`, and timestamps are managed by the server.
 	//
 	// +k8s:required
 	// +k8s:subfield(atespace)=+k8s:required
 	Metadata *ResourceMetadata `protobuf:"bytes,1,opt,name=metadata,proto3" json:"metadata,omitempty"`
-	// TODO: replace with full actor_template spec if we decide to make each Actor self-contained.
+	// ActorTemplate that defines this actor's containers, volumes, resource
+	// requirements, and snapshot settings. May reference a template in any
+	// Atespace.
+	//
 	// +k8s:required
 	// +k8s:subfield(atespace)=+k8s:required
 	// +k8s:mutable
 	ActorTemplate *ObjectRef `protobuf:"bytes,2,opt,name=actor_template,json=actorTemplate,proto3" json:"actor_template,omitempty"`
-	// worker_selector is the per-actor placement constraint. The scheduler
-	// evaluates the AND of this selector and the template's workerSelector to
-	// find eligible pools. It narrows the template's selection; pinning a
-	// sandbox class belongs on the template's worker_selector.
-	// Changes take effect on the next ResumeActor call.
+	// Worker placement constraint for this Actor.
+	//
+	// Combined (logical AND) with the ActorTemplate's `worker_selector` when
+	// scheduling the actor onto a WorkerPool. Use this to narrow placement for a
+	// specific actor. Changes take effect on the next ResumeActor call.
 	//
 	// +k8s:optional
 	WorkerSelector *Selector `protobuf:"bytes,3,opt,name=worker_selector,json=workerSelector,proto3" json:"worker_selector,omitempty"`
-	// The tag specified by the caller at CreateActor to seed this Actor from an
-	// ActorSnapshot. Unset if the Actor was not created from a snapshot. Set
-	// once at creation and immutable afterward.
+	// Explicit Tag passed at CreateActor time to seed this Actor's initial
+	// snapshot.
+	//
+	// When unset on CreateActor, the actor is seeded from the template's golden
+	// Tag if one exists, while `source_tag` remains unset. Immutable after
+	// creation.
 	//
 	// +k8s:optional
 	// +k8s:subfield(atespace)=+k8s:required
 	// +k8s:immutable
 	SourceTag *ObjectRef `protobuf:"bytes,4,opt,name=source_tag,json=sourceTag,proto3" json:"source_tag,omitempty"`
-	// status is the system-managed state of the Actor. It is updated by the
-	// server and ignored on input. It is always present in output.
+	// Runtime, placement, volume, and snapshot state of the Actor managed by the
+	// server.
+	//
+	// Ignored on input and always present on output.
 	//
 	// +k8s:optional
 	Status        *ActorStatus `protobuf:"bytes,5,opt,name=status,proto3" json:"status,omitempty"`
@@ -1300,34 +1386,38 @@ func (x *Actor) GetStatus() *ActorStatus {
 	return nil
 }
 
-// EgressPolicy is an egress policy resource nested under an Actor. An Actor has
-// at most one egress policy resource, named "default".
+// EgressPolicy is an egress policy resource nested under an Actor.
+//
+// Each Actor has at most one EgressPolicy resource, named `default`. When no
+// EgressPolicy exists for an Actor, all outbound network traffic from the Actor
+// is denied.
 type EgressPolicy struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Standard resource metadata. Atespace must match the parent Actor and name
-	// must be "default". Both are caller-specified on create and immutable.
-	// UID, version, create_time, and update_time are server-managed.
+	// Standard resource metadata.
+	//
+	// `atespace` must match the parent Actor and `name` must be `default`. Both
+	// are set by the caller on create and are immutable. `uid`, `version`, and
+	// timestamps are managed by the server.
 	//
 	// +k8s:required
 	// +k8s:subfield(atespace)=+k8s:required
 	// +k8s:customValidation # name must be "default"
 	Metadata *ResourceMetadata `protobuf:"bytes,1,opt,name=metadata,proto3" json:"metadata,omitempty"`
-	// Rules are an unordered set of allows. Traffic is denied when no rule
+	// Unordered set of allow rules. Outbound traffic is denied when no rule
 	// matches.
 	//
-	// For a given destination name and port, exactly one rule decides,
-	// whatever its protocol. When more than one rule matches, the winner is
-	// chosen by these criteria, in order, moving to the next one on a tie:
+	// Cleartext HTTP requests are evaluated against `http` rules, and TLS
+	// connections against `https` and `tls_passthrough` rules. When multiple
+	// rules match a request or TLS connection, the winning rule is chosen by
+	// these criteria in order:
 	//
-	//   * A matching hostname without a wildcard.
-	//   * A matching port number rather than all ports.
+	// * Hostname specificity: exact hostname over a `*.label` prefix wildcard,
+	//   and `*.label` over a bare `*`.
+	// * Port specificity: an explicit port number over `all` ports.
 	//
-	// Two rules with the same pattern on the same port, or both on all ports,
-	// are rejected at admission.
-	//
-	// These criteria apply within a protocol and across protocols that decide
-	// on the same input, such as an https and a tls_passthrough rule that match
-	// the same pattern. Only the winning rule's effects are applied.
+	// Two rules in the policy with the same hostname pattern on the same port (or
+	// both on `all` ports) are rejected as ambiguous at admission, even across
+	// different protocols. Only the winning rule's `effects` are applied.
 	//
 	// +k8s:optional
 	// +k8s:maxItems=256
@@ -1382,14 +1472,19 @@ func (x *EgressPolicy) GetRules() []*EgressRule {
 	return nil
 }
 
-// EgressPolicyTemplate defines an initial Actor egress policy without resource
-// metadata. Each rule has the same defaults, validation, and semantics as
-// EgressPolicy.rules.
+// EgressPolicyTemplate defines the egress policy for an ActorTemplate's
+// temporary golden Actor during golden snapshot creation.
+//
+// Regular Actors created from the template do not inherit this policy. Each
+// rule has the same defaults, validation, and semantics as
+// `EgressPolicy.rules`.
 type EgressPolicyTemplate struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Rules are an unordered set of allows, with the same precedence and effects
-	// as EgressPolicy.rules. At least one rule is required. Traffic is denied
-	// when no rule matches.
+	// Unordered set of allow rules, with the same precedence and effects as
+	// `EgressPolicy.rules`.
+	//
+	// At least one rule is required. Outbound traffic is denied when no rule
+	// matches.
 	//
 	// +k8s:required
 	// +k8s:maxItems=256
@@ -1437,29 +1532,33 @@ func (x *EgressPolicyTemplate) GetRules() []*EgressRule {
 	return nil
 }
 
-// EgressRule allows traffic for a given protocol and destination (host name
-// or IP, and port). The protocol fixes what the gateway matches on and when:
-// a request, or a TLS connection at its ClientHello. Traffic that matches no
-// rule is refused. All protocols here run over TCP; UDP is blocked. Protocols
-// where the server sends first after connect are not supported.
+// EgressRule allows outbound TCP traffic for a specific protocol and
+// destination.
 //
-// Users should expect additional protocols to be supported in the future.
+// The protocol determines how the egress gateway inspects and authorizes
+// traffic (per HTTP request or at the TLS ClientHello). Traffic that matches no
+// rule is refused. All rules apply to TCP. UDP and protocols where the server
+// speaks first are not supported.
 type EgressRule struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Cleartext HTTP to the named hosts: HTTP/1.1, and h2c as used by gRPC.
-	// TLS to these names is not allowed by this rule.
+	// Cleartext HTTP to the named hosts (HTTP/1.1, and h2c as used by gRPC).
+	//
+	// TLS connections to these names are not allowed by this rule.
 	//
 	// +k8s:optional
 	// +k8s:unionMember
 	Http *HttpRule `protobuf:"bytes,1,opt,name=http,proto3" json:"http,omitempty"`
-	// HTTPS to the named hosts, intercepted (man-in-the-middle) so the gateway
-	// can authorize and modify each request. HTTP/1.1 and HTTP/2 inside the
-	// TLS connection; HTTP/3 is not supported.
+	// HTTPS to the named hosts, terminated and reencrypted (MITM) by the gateway
+	// so it can authorize and apply header effects to each request.
+	//
+	// Supports HTTP/1.1 and HTTP/2 inside the TLS connection. HTTP/3 is not
+	// supported.
 	//
 	// +k8s:optional
 	// +k8s:unionMember
 	Https *HttpsRule `protobuf:"bytes,2,opt,name=https,proto3" json:"https,omitempty"`
-	// TLS to the named servers, forwarded without decryption.
+	// TLS to the named servers, forwarded without decryption after matching the
+	// SNI and port.
 	//
 	// +k8s:optional
 	// +k8s:unionMember
@@ -1520,40 +1619,38 @@ func (x *EgressRule) GetTlsPassthrough() *TlsPassthroughRule {
 }
 
 // HttpRule allows cleartext HTTP and is evaluated per request on the request
-// authority (Host or :authority) and port. The gateway resolves the name and
-// dials it.
+// authority (`Host` or `:authority`) and destination port.
+//
+// The gateway resolves the hostname and dials the upstream server. WebSocket
+// upgrades (`ws://`) and HTTP `CONNECT` requests are refused with HTTP 403.
 type HttpRule struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Hostname patterns: a DNS name, or a DNS name with "*" as its leftmost
-	// label. The rule matches when any pattern matches.
+	// Hostname patterns matched against the request authority: a lowercase RFC
+	// 1123 DNS name, or a DNS name with `*` as its leftmost label. The rule
+	// matches when any pattern matches.
 	//
-	// The DNS name must conform to RFC 1034 and RFC 1123. It must be lowercase
-	// and must not have a trailing dot.
-	//
-	// A wildcard replaces the complete leftmost label. "*.example.com" matches
-	// exactly one non-empty label, such as "api.example.com". It does not match
-	// "example.com" or "nested.api.example.com". "*" alone matches every name.
-	// No other wildcard syntax is accepted. A pattern without a wildcard matches
-	// only the complete normalized name. Patterns may overlap: the rule ranks
-	// by the most specific pattern that matches the destination.
-	//
-	// Internationalized names must use their IDNA A-label (punycode) form; no
-	// Unicode conversion is performed. URLs, IP addresses, names with ports,
-	// malformed DNS names (for example, "foo..example.com"), and more than one
-	// trailing dot are invalid.
+	// A wildcard replaces the complete leftmost label: `*.example.com` matches
+	// `api.example.com`, and does not match `example.com` or
+	// `nested.api.example.com`. `*` alone matches any hostname, as well as
+	// requests whose authority is an IP literal (which the gateway dials
+	// directly). Internationalized domain names must use their punycode (`xn--`)
+	// form. IP address literals, URLs, ports, and trailing dots are rejected as
+	// patterns.
 	//
 	// +k8s:required
 	// +k8s:maxItems=256
 	// +k8s:listType=set
 	// +k8s:customValidation # format
 	Hostnames []string `protobuf:"bytes,1,rep,name=hostnames,proto3" json:"hostnames,omitempty"`
-	// Ports of the destination the Actor connected to. A port in a request's
-	// authority is neither matched nor dialed. Defaults to port 80.
+	// Destination TCP ports the Actor connected to.
+	//
+	// Any port in the HTTP request's `Host` or `:authority` header is neither
+	// matched nor dialed. Defaults to port `80` when unset.
 	//
 	// +k8s:optional
 	Ports *Ports `protobuf:"bytes,2,opt,name=ports,proto3" json:"ports,omitempty"`
-	// Effects do not authorize traffic. They are applied only when this is the
-	// deciding rule.
+	// Request modifications applied when this rule is the winning rule for a
+	// request.
 	//
 	// +k8s:optional
 	Effects       *HttpRuleEffects `protobuf:"bytes,3,opt,name=effects,proto3" json:"effects,omitempty"`
@@ -1612,33 +1709,35 @@ func (x *HttpRule) GetEffects() *HttpRuleEffects {
 	return nil
 }
 
-// HttpsRule allows HTTPS that the gateway intercepts (MITM). Every Actor behind such
-// a rule must trust the gateway CA. Without it, TLS to these names fails in the
-// Actor.
+// HttpsRule allows HTTPS that the egress gateway intercepts (MITM).
+//
+// Actors using an HttpsRule must trust the gateway CA (mounted via a
+// `system_info.trust_bundle` volume). Without it, TLS handshakes fail inside
+// the Actor.
 //
 // A TLS connection whose SNI and port match is terminated with a leaf
-// certificate for that name issued by the gateway CA. Each request inside it
-// is then decided on its authority, and the gateway re-originates TLS to that
-// authority; the SNI only selects the leaf.
-//
-// Interception is for HTTP. A connection that sends no SNI does not match,
-// and a non-HTTP protocol inside an intercepted connection fails.
+// certificate issued by the gateway CA. Each HTTP request inside the connection
+// is then authorized on its authority header, and the gateway originates a new
+// TLS connection to that upstream authority. Connections without SNI or
+// carrying protocols other than HTTP fail, and WebSocket upgrades (`wss://`)
+// and HTTP `CONNECT` requests are refused with HTTP 403.
 type HttpsRule struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Server names matched against the SNI, in the pattern syntax of
-	// HttpRule.hostnames.
+	// Server name patterns matched against the TLS SNI and HTTP request
+	// authority, using the same syntax as `HttpRule.hostnames`.
 	//
 	// +k8s:required
 	// +k8s:maxItems=256
 	// +k8s:listType=set
 	// +k8s:customValidation # format
 	Hostnames []string `protobuf:"bytes,1,rep,name=hostnames,proto3" json:"hostnames,omitempty"`
-	// Ports of the destination the Actor connected to. Defaults to port 443.
+	// Destination TCP ports the Actor connected to. Defaults to port `443` when
+	// unset.
 	//
 	// +k8s:optional
 	Ports *Ports `protobuf:"bytes,2,opt,name=ports,proto3" json:"ports,omitempty"`
-	// Effects do not authorize traffic. They are applied only when this is the
-	// deciding rule.
+	// Request modifications applied when this rule is the winning rule for a
+	// request.
 	//
 	// +k8s:optional
 	Effects       *HttpRuleEffects `protobuf:"bytes,3,opt,name=effects,proto3" json:"effects,omitempty"`
@@ -1697,24 +1796,25 @@ func (x *HttpsRule) GetEffects() *HttpRuleEffects {
 	return nil
 }
 
-// TlsPassthroughRule allows TLS that the gateway forwards without decryption.
-// It is evaluated once per connection at the ClientHello, on the SNI and
-// port, for any protocol carried over TLS. A connection that sends no SNI
-// does not match. Protocols that upgrade to TLS after a cleartext exchange
-// (STARTTLS) do not match. Because the gateway reads nothing after the
-// ClientHello, a passthrough rule has no effects, and a policy change reaches
-// an open connection only when it ends.
+// TlsPassthroughRule allows TLS connections that the gateway forwards unchanged
+// without decryption.
+//
+// Evaluated once per connection at the TLS ClientHello against the SNI and
+// destination port, for any protocol carried over TLS. Connections without SNI
+// or using cleartext STARTTLS upgrades do not match. Because the gateway does
+// not terminate TLS, passthrough rules cannot inspect inner requests or apply
+// HTTP effects.
 type TlsPassthroughRule struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Server names matched against the SNI, in the pattern syntax of
-	// HttpRule.hostnames.
+	// Server name patterns matched against the TLS SNI, using the same syntax as
+	// `HttpRule.hostnames`.
 	//
 	// +k8s:required
 	// +k8s:maxItems=256
 	// +k8s:listType=set
 	// +k8s:customValidation # format
 	Hostnames []string `protobuf:"bytes,1,rep,name=hostnames,proto3" json:"hostnames,omitempty"`
-	// Ports of the destination the Actor connected to.
+	// Destination TCP ports the Actor connected to.
 	//
 	// +k8s:required
 	Ports         *Ports `protobuf:"bytes,2,opt,name=ports,proto3" json:"ports,omitempty"`
@@ -1766,16 +1866,17 @@ func (x *TlsPassthroughRule) GetPorts() *Ports {
 	return nil
 }
 
-// Ports selects the destination ports a rule matches. Every port, or a set
-// of port numbers. all and numbers can not be set together.
+// Ports selects the destination TCP ports an EgressRule matches.
+//
+// Exactly one of `all` or `numbers` must be set.
 type Ports struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Every port.
+	// Match all destination TCP ports (1 to 65535).
 	//
 	// +k8s:optional
 	// +k8s:unionMember
 	All *AllPorts `protobuf:"bytes,1,opt,name=all,proto3" json:"all,omitempty"`
-	// Port numbers, without repeats.
+	// Explicit TCP port numbers to match, without duplicates.
 	//
 	// +k8s:optional
 	// +k8s:unionMember
@@ -1832,7 +1933,7 @@ func (x *Ports) GetNumbers() []int32 {
 	return nil
 }
 
-// AllPorts selects every port. It has no fields.
+// AllPorts selects every TCP port. It has no fields.
 type AllPorts struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -1869,23 +1970,26 @@ func (*AllPorts) Descriptor() ([]byte, []int) {
 	return file_api_ateapi_v1_ateapi_proto_rawDescGZIP(), []int{15}
 }
 
-// HttpRuleEffects contains effects applied by a matching HTTP or HTTPS rule.
+// HttpRuleEffects defines modifications applied by the egress gateway to
+// requests matching an HttpRule or HttpsRule.
+//
+// When `effects` is set on a rule, at least one effect (`replace_headers`
+// entry) must be specified.
 //
 // +k8s:customValidation # for "at least one" and duplicate headers
 type HttpRuleEffects struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Replaces placeholder request headers with credentials. A header is
-	// replaced only when the request from the Actor carries it; requests
-	// without the header are forwarded unchanged, so a credential reaches only
-	// the requests that ask for it. Header names must be unique
-	// case-insensitively.
+	// Replaces placeholder request headers with credentials before forwarding
+	// upstream.
 	//
-	// Replacement is supported on HTTP and HTTPS. On HTTP, the gateway does
-	// not originate TLS to the destination. Without separate transport
-	// protection, observers can read the credential and attackers on the path
-	// can modify the request. Deployments may encrypt traffic outside the
-	// gateway; policy authors must account for any unprotected segments
-	// between credential injection and the intended destination.
+	// A header is replaced only when the outbound request from the Actor already
+	// includes that header name. Requests without the header are forwarded
+	// unchanged, so credentials are sent only on requests that opt in. Header
+	// names must be unique without regard to case.
+	//
+	// On `http` rules, the gateway does not encrypt traffic to the upstream
+	// destination. Use `replace_headers` on cleartext HTTP only when the path to
+	// the upstream is otherwise protected.
 	//
 	// +k8s:optional
 	// +k8s:maxItems=16
@@ -1936,35 +2040,47 @@ func (x *HttpRuleEffects) GetReplaceHeaders() []*CredentialHeader {
 }
 
 // CredentialHeader replaces the value of an HTTP request header with a
-// credential. The Actor sends the header with a placeholder value, such as
-// "Authorization: <something>"; the gateway discards that value and forwards
-// the header with the credential instead. The placeholder itself is not
-// inspected, so any value works. A request without the header is not
-// modified.
+// credential fetched or minted by the egress gateway.
+//
+// The Actor sends the header with a placeholder value (such as
+// `Authorization: <placeholder>`), and the gateway replaces that value with the
+// resolved credential before forwarding. Requests that do not carry the header
+// are left unmodified.
 type CredentialHeader struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// The case-insensitive HTTP request header to replace when present.
+	// HTTP request header name to replace when present on the request, matched
+	// without regard to case.
+	//
+	// Must be a valid HTTP token field name. `Host` is accepted at admission but
+	// never replaced.
 	//
 	// +k8s:required
 	// +k8s:customValidation # format
 	Header string `protobuf:"bytes,1,opt,name=header,proto3" json:"header,omitempty"`
-	// Prepended verbatim to the credential value. Include any desired separator;
-	// for example, use "Bearer " (including the space) for Authorization.
+	// Literal prefix prepended verbatim to the injected credential value.
+	//
+	// Include any required separator, such as `"Bearer "` (with the trailing
+	// space) for an `Authorization` header.
 	//
 	// +k8s:optional
 	// +k8s:customValidation # format
 	Prefix string `protobuf:"bytes,2,opt,name=prefix,proto3" json:"prefix,omitempty"`
-	// Source-agnostic reference interpreted by a registered credential provider:
-	// ate-secret://<provider-class>/<provider-name>/<provider-specific-tail>
+	// URI referencing a secret in one of the cluster's external credential
+	// providers, formatted as `ate-secret://<provider-class>/<path>` with at
+	// least two non-empty `/` path segments interpreted by that provider.
 	//
-	// Exactly one of credential_uri and actor_jwt must be set.
+	// The egress gateway fails requests when the cluster has no provider for
+	// `<provider-class>`. Exactly one of `credential_uri` or `actor_jwt` must be
+	// set.
 	//
 	// +k8s:optional
 	// +k8s:unionMember
 	// +k8s:customValidation # format
 	CredentialUri string `protobuf:"bytes,3,opt,name=credential_uri,json=credentialUri,proto3" json:"credential_uri,omitempty"`
-	// A Substrate-issued JWT asserting the identity of the Actor that sent the
-	// request.
+	// Configuration for minting a Substrate OIDC JWT asserting the calling
+	// Actor's identity.
+	//
+	// Exactly one of `credential_uri` or `actor_jwt` must be set.
 	//
 	// +k8s:optional
 	// +k8s:unionMember
@@ -2031,13 +2147,16 @@ func (x *CredentialHeader) GetActorJwt() *ActorJwtSource {
 	return nil
 }
 
-// ActorJwtSource has the gateway mint a JWT for the Actor that sent the
-// request. Relying parties verify it with OpenID Connect Discovery against its
-// issuer. The gateway reuses a JWT across requests while enough of its
-// lifetime remains, so its jti does not identify a single request.
+// ActorJwtSource configures the egress gateway to mint an OIDC JWT asserting
+// the identity of the Actor sending the request.
+//
+// Relying parties verify the token using OpenID Connect Discovery against the
+// cluster's issuer URL. The gateway caches and reuses a minted JWT across
+// requests while sufficient lifetime remains, so `jti` does not uniquely
+// identify a single HTTP request.
 type ActorJwtSource struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// The audiences the JWT is bound to, which become its aud claim.
+	// Audience strings placed in the JWT's `aud` claim.
 	//
 	// +k8s:required
 	// +k8s:maxItems=16
@@ -2045,7 +2164,7 @@ type ActorJwtSource struct {
 	// +k8s:eachVal=+k8s:minLength=1
 	// +k8s:eachVal=+k8s:maxLength=512
 	Audiences []string `protobuf:"bytes,1,rep,name=audiences,proto3" json:"audiences,omitempty"`
-	// Lifetime of each JWT, in seconds.
+	// Lifetime of each minted JWT, in seconds (between 300 and 3600).
 	//
 	// +k8s:required
 	// +k8s:minimum=300
@@ -2099,42 +2218,59 @@ func (x *ActorJwtSource) GetExpirationSeconds() int64 {
 	return 0
 }
 
+// ActorStatus reports the lifecycle, placement, volume, and snapshot state of
+// an Actor managed by the server.
 type ActorStatus struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// state is the Actor's current lifecycle state.
+	// Current lifecycle state of the Actor.
 	//
 	// +k8s:required
 	// +k8s:minimum=1
 	// +k8s:maximum=7 # keep this in sync with the ActorState enum
 	State ActorState `protobuf:"varint,1,opt,name=state,proto3,enum=substrate.ateapi.v1.ActorState" json:"state,omitempty"`
-	// worker_assignment points at the worker currently hosting this Actor.
-	// Unset whenever the Actor has no worker (SUSPENDED, CRASHED).
+	// Worker currently hosting this Actor.
 	//
-	// It can be set and cleared, but not pointed at another Worker in place:
-	// the fields that identify the Worker cannot change while it is set.
+	// Populated while the actor is assigned to a Worker (`RESUMING`, `RUNNING`,
+	// and during `SUSPENDING`, `REVERTING`, or `DELETING` until the Worker is
+	// released), and unset when the actor has no Worker (`SUSPENDED` or
+	// `CRASHED`).
+	//
+	// (-- It can be set and cleared, but not pointed at another Worker in place: the fields that identify the Worker cannot change while it is set. --)
 	//
 	// +k8s:optional
 	WorkerAssignment *WorkerAssignment `protobuf:"bytes,2,opt,name=worker_assignment,json=workerAssignment,proto3" json:"worker_assignment,omitempty"`
-	// external_volumes is the state of the external volumes attached to the
-	// actor. These volumes only live as long as the actor and are deleted with
-	// it.
+	// CSI external volumes declared for the Actor.
+	//
+	// Recorded at CreateActor with an empty `storage_volume_id`, provisioned on
+	// the actor's first resume, and deleted when the actor is deleted.
 	//
 	// +ate:preview=ExternalVolumes
 	// +k8s:optional
 	ExternalVolumes *ExternalVolumes `protobuf:"bytes,3,opt,name=external_volumes,json=externalVolumes,proto3" json:"external_volumes,omitempty"`
-	// crash records why and when the Actor entered CRASHED. It is set with the
-	// CRASHED state and cleared when a revert returns the Actor to SUSPENDED.
+	// Details of why and when the Actor entered `CRASHED` state.
+	//
+	// Populated when the actor transitions to `CRASHED` and cleared when
+	// RevertActor returns the actor to `SUSPENDED`.
 	//
 	// +k8s:optional
 	Crash *ActorCrash `protobuf:"bytes,4,opt,name=crash,proto3" json:"crash,omitempty"`
-	// assigned_node is the node hosting the Actor's worker or local snapshot.
-	// A suspended Actor remains attached while its local snapshot is kept.
-	// Detach or revert clears the binding.
+	// Node associated with the Actor's Worker, local snapshot, or uncleaned node
+	// state.
+	//
+	// Set when the actor is placed on a node, retained while a local snapshot or
+	// crashed state remains on that node, and cleared when a synchronous suspend
+	// leaves no local copy, when the local snapshot is detached, or when the
+	// actor is reverted or deleted.
 	//
 	// +k8s:optional
 	// +k8s:format=k8s-long-name
 	AssignedNode string `protobuf:"bytes,5,opt,name=assigned_node,json=assignedNode,proto3" json:"assigned_node,omitempty"`
-	// snapshots holds the Actor's active and in-progress snapshot generations.
+	// Active and pending snapshot generations for the Actor.
+	//
+	// Holds `COMPLETED` durable snapshots in object storage and any newer
+	// `PENDING` local or in-progress snapshot generations. The entry with the
+	// highest `generation` is the latest snapshot; superseded `COMPLETED` entries
+	// may remain until the next suspend or revert prunes them.
 	//
 	// +k8s:optional
 	// +k8s:maxItems=16
@@ -2142,10 +2278,12 @@ type ActorStatus struct {
 	// +k8s:unique=map
 	// +k8s:listMapKey=generation
 	Snapshots []*Snapshot `protobuf:"bytes,6,rep,name=snapshots,proto3" json:"snapshots,omitempty"`
-	// last_assigned_generation tracks the last snapshot generation assigned for
-	// this Actor during a Suspend request.
-	// Even during Revert, the generation is not decreased to keep track of snapshots
-	// that have become stale and need to be cleaned up.
+	// Highest snapshot generation number ever assigned to this Actor.
+	//
+	// Starts at `1` when seeded from a Tag (or golden Tag) at CreateActor time,
+	// and increments on each SuspendActor checkpoint. Monotonically increasing
+	// even across RevertActor calls so stale snapshot generations can be
+	// identified and cleaned up.
 	//
 	// +k8s:optional
 	// +k8s:alpha(since: "0.0")=+k8s:monotonic # TODO: get rid of alpha prefix
@@ -2235,15 +2373,15 @@ func (x *ActorStatus) GetLastAssignedGeneration() int32 {
 	return 0
 }
 
-// ActorCrash describes the failure that moved an Actor to CRASHED.
+// ActorCrash describes the failure that moved an Actor to `CRASHED` state.
 type ActorCrash struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// message is a human-readable description of the failure.
+	// Diagnostic description of the failure.
 	//
 	// +k8s:optional
 	// +k8s:maxLength=4096
 	Message string `protobuf:"bytes,1,opt,name=message,proto3" json:"message,omitempty"`
-	// crash_time is when the Actor entered CRASHED.
+	// Timestamp when the Actor entered `CRASHED` state.
 	//
 	// +k8s:optional
 	CrashTime     *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=crash_time,json=crashTime,proto3" json:"crash_time,omitempty"`
@@ -2295,83 +2433,75 @@ func (x *ActorCrash) GetCrashTime() *timestamppb.Timestamp {
 	return nil
 }
 
-// WorkerAssignment points at the Worker currently hosting an Actor.
+// WorkerAssignment describes the Worker currently hosting an Actor.
 //
-// This is a denormalized snapshot, not merely a reference: atenet reads
-// worker_pod_ips on the request-routing path and must not need a second lookup,
-// and kubectl-ate displays the pod name. The copies of the Worker's identity
-// fields stay valid for the life of the assignment because those fields are
-// immutable, and cannot change in place. worker_pod_ips and worker_epoch
-// describe the worker process the Actor runs under, and are updated when the
-// Actor becomes RUNNING.
-//
-// Pass `worker` to GetWorker; none of the denormalized fields identify the
-// Worker to the API.
+// Carries a denormalized copy of the Worker's network and instance identity so
+// data plane proxies can route to `worker_pod_ips` and CLI tools can display
+// the Worker without a second lookup. Pass `worker` to GetWorker to fetch the
+// Worker resource itself.
 type WorkerAssignment struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// worker references the assigned Worker. This is the field to look the Worker
-	// up by; the worker_* fields below are a denormalized copy kept so that
-	// readers on a hot path do not have to fetch the Worker at all.
+	// Reference to the assigned Worker resource.
 	//
-	// Workers are global-scoped, so this carries no atespace.
+	// Pass this reference to GetWorker. Workers are global resources, so
+	// `atespace` is always empty.
 	//
 	// +k8s:beta(since: "0.0")=+k8s:subfield(atespace)=+k8s:forbidden # TODO: get rid of beta prefix
 	// +k8s:required
 	// +k8s:update=NoModify
 	Worker *ObjectRef `protobuf:"bytes,6,opt,name=worker,proto3" json:"worker,omitempty"`
-	// worker_namespace is the Kubernetes namespace of the WorkerPool and worker Pod.
+	// Kubernetes namespace of the Worker Pod and WorkerPool.
 	//
 	// +k8s:required
 	// +k8s:format=k8s-short-name
 	// +k8s:update=NoModify
 	WorkerNamespace string `protobuf:"bytes,1,opt,name=worker_namespace,json=workerNamespace,proto3" json:"worker_namespace,omitempty"`
-	// worker_pool is the name of the WorkerPool the worker belongs to.
+	// Name of the WorkerPool the Worker belongs to.
 	//
 	// +k8s:required
 	// +k8s:format=k8s-long-name
 	// +k8s:update=NoModify
 	WorkerPool string `protobuf:"bytes,2,opt,name=worker_pool,json=workerPool,proto3" json:"worker_pool,omitempty"`
-	// worker_pod is the name of the Kubernetes pod hosting the Actor.
+	// Name of the Kubernetes Pod running the Worker.
 	//
 	// +k8s:required
 	// +k8s:format=k8s-long-name
 	// +k8s:update=NoModify
 	WorkerPod string `protobuf:"bytes,3,opt,name=worker_pod,json=workerPod,proto3" json:"worker_pod,omitempty"`
-	// worker_pod_uid is the Kubernetes UID of worker_pod.
+	// Kubernetes Pod UID of `worker_pod`.
 	//
 	// +k8s:required
 	// +k8s:format=k8s-uuid
 	// +k8s:update=NoModify
 	WorkerPodUid string `protobuf:"bytes,4,opt,name=worker_pod_uid,json=workerPodUid,proto3" json:"worker_pod_uid,omitempty"`
-	// worker_pod_ips are the IPs of worker_pod, copied from Worker.status.ips
-	// when the Actor is placed, and again when it becomes RUNNING.
+	// IP addresses of `worker_pod`, copied from `Worker.status.ips` when the
+	// Actor is placed and refreshed when it reaches `RUNNING` state.
 	//
 	// +k8s:required
 	// +k8s:maxItems=2
 	// +k8s:listType=atomic
 	// +k8s:customValidation # until `format=k8s-ip` is supported
 	WorkerPodIps []string `protobuf:"bytes,5,rep,name=worker_pod_ips,json=workerPodIps,proto3" json:"worker_pod_ips,omitempty"`
-	// node_name is the Kubernetes node hosting worker_pod.
+	// Node hosting the Worker.
 	//
 	// +k8s:required
 	// +k8s:format=k8s-long-name
 	// +k8s:update=NoModify
 	NodeName string `protobuf:"bytes,7,opt,name=node_name,json=nodeName,proto3" json:"node_name,omitempty"`
-	// worker_epoch is the epoch of the worker process the Actor runs under, as
-	// that process reports it from Run or Restore. 0 until the Actor becomes
-	// RUNNING.
+	// Epoch of the Worker process the Actor runs under, as reported when the
+	// sandbox starts or restores. `0` while the Actor is still resuming.
 	//
 	// +k8s:optional
 	// +k8s:minimum=0
 	WorkerEpoch int64 `protobuf:"varint,8,opt,name=worker_epoch,json=workerEpoch,proto3" json:"worker_epoch,omitempty"`
-	// sandbox_runtime is the sandbox runtime and compatibility version the Actor
-	// was started or restored under on this Worker.
+	// Sandbox runtime and compatibility version the Actor was started or restored
+	// under on this Worker.
 	//
 	// +k8s:optional
 	// +k8s:update=NoModify
 	SandboxRuntime *ActorSandboxRuntime `protobuf:"bytes,9,opt,name=sandbox_runtime,json=sandboxRuntime,proto3" json:"sandbox_runtime,omitempty"`
-	// worker_spiffe_id is the SPIFFE ID worker_pod's certificate carries, copied
-	// from Worker.worker_spiffe_id.
+	// SPIFFE ID carried by the Worker's mTLS certificate, copied from
+	// `Worker.worker_spiffe_id`.
 	//
 	// +k8s:optional
 	// +k8s:maxLength=2048
@@ -2482,23 +2612,27 @@ func (x *WorkerAssignment) GetWorkerSpiffeId() string {
 	return ""
 }
 
-// TagStatus is the server-owned state of a Tag.
-// The tag is fixed to one external snapshot once its creation completes, so
-// the rest is immutable provenance.
+// TagStatus is the state of a Tag managed by the server.
+//
+// Once creation finishes, a Tag is permanently bound to a single external
+// snapshot and template provenance.
 type TagStatus struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// snapshot is the external snapshot this tag points at: the tag's own copy,
-	// stored under a prefix keyed on the tag's UID. It is recorded with its
-	// durable_snapshot PENDING right after the tag is reserved, before anything
-	// is copied, and transitions to COMPLETED once the copy finishes: a tag never
-	// moves between snapshots and is usable only once COMPLETED. Unset until it
-	// is recorded; a tag whose creation failed first never gets one.
+	// External snapshot owned by this Tag, stored under a prefix keyed by the
+	// Tag's UID.
+	//
+	// Recorded with `durable_snapshot.state` set to `PENDING` before the
+	// snapshot copy starts, and updated to `COMPLETED` once the copy finishes. A
+	// Tag can be used to seed Actors only after `durable_snapshot.state` reaches
+	// `COMPLETED`.
 	//
 	// +k8s:optional
 	// +k8s:subfield(durable_snapshot)=+k8s:required
 	Snapshot *Snapshot `protobuf:"bytes,1,opt,name=snapshot,proto3" json:"snapshot,omitempty"`
-	// UID of the ActorTemplate the snapshot was taken under. Actors can only be
-	// seeded from a tag under the same template.
+	// UID of the ActorTemplate under which the tagged snapshot was captured.
+	//
+	// An Actor seeded from this Tag at CreateActor time must reference the
+	// ActorTemplate with this `metadata.uid`.
 	//
 	// +k8s:required
 	// +k8s:format=k8s-uuid
@@ -2551,30 +2685,43 @@ func (x *TagStatus) GetActorTemplateUid() string {
 	return ""
 }
 
-// Tag is an Atespace-owned, stable name for one external snapshot. The
-// external snapshot pointed by a tag is a copy of an actor snapshot. The
-// snapshot is copied when the tag is created, and deleted when the tag is. Its
-// owning Atespace cannot be deleted until the tag is removed.
+// Tag is a named handle in an Atespace to an immutable copy of an Actor's
+// external snapshot.
+//
+// Pass a Tag in `Actor.source_tag` at CreateActor time to seed new Actors from
+// a known checkpoint. The underlying snapshot is copied when the Tag is
+// created and deleted when the Tag is deleted. Actors seeded from a Tag borrow
+// its snapshot until their first suspend writes a snapshot under the Actor's
+// own prefix, so deleting the Tag before then makes those unsuspended Actors
+// unrecoverable. An Atespace cannot be deleted while any Tags remain in it.
 type Tag struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Common resource metadata: atespace, name, uid, version, timestamps.
+	// Standard resource metadata.
+	//
+	// `atespace` and `name` are set by the caller on create and are immutable.
+	// `uid`, `version`, and timestamps are managed by the server.
 	//
 	// +k8s:required
 	// +k8s:subfield(atespace)=+k8s:required
 	Metadata *ResourceMetadata `protobuf:"bytes,1,opt,name=metadata,proto3" json:"metadata,omitempty"`
-	// status is set by the control plane; it is ignored on write.
+	// Snapshot and template provenance of the Tag managed by the server. Ignored
+	// on input.
 	//
 	// +k8s:optional
 	Status *TagStatus `protobuf:"bytes,2,opt,name=status,proto3" json:"status,omitempty"`
-	// scope controls who may create an Actor from this tag.
+	// Visibility scope controlling which Atespaces may seed Actors from this Tag.
+	//
+	// Mutable via UpdateTag once `status.snapshot.durable_snapshot.state` is
+	// `COMPLETED` and before DeleteTag has started.
 	//
 	// +k8s:required
 	// +k8s:minimum=1
 	// +k8s:maximum=2 # keep this in sync with the TagScope enum
 	Scope TagScope `protobuf:"varint,3,opt,name=scope,proto3,enum=substrate.ateapi.v1.TagScope" json:"scope,omitempty"`
-	// source_actor is the suspended Actor whose external snapshot this tag
-	// captures. The tag lives in this Actor's Atespace. Set once at creation and
-	// immutable afterward.
+	// Suspended Actor whose snapshot was copied to create this Tag.
+	//
+	// Must reside in the same Atespace as the Tag. Set once on create and
+	// immutable thereafter.
 	//
 	// +k8s:required
 	// +k8s:subfield(atespace)=+k8s:required
@@ -2642,11 +2789,17 @@ func (x *Tag) GetSourceActor() *ObjectRef {
 	return nil
 }
 
-// Atespace is the isolation boundary an Actor is created into. Global-scoped:
-// metadata.atespace is always empty; the atespace's identity is metadata.name.
+// Atespace is a tenant and environment isolation boundary for Actors,
+// ActorTemplates, Tags, and AccessPolicies.
+//
+// Global resource: `metadata.atespace` must be empty, and the Atespace is
+// identified by `metadata.name`.
 type Atespace struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Common resource metadata: name, uid, version, timestamps.
+	// Standard resource metadata.
+	//
+	// `atespace` must be empty. `name` is set by the caller on create and is
+	// immutable. `uid`, `version`, and timestamps are managed by the server.
 	//
 	// +k8s:required
 	// +k8s:beta(since: "0.0")=+k8s:subfield(atespace)=+k8s:forbidden # TODO: get rid of beta prefix
@@ -2692,19 +2845,24 @@ func (x *Atespace) GetMetadata() *ResourceMetadata {
 	return nil
 }
 
-// ObjectRef references a Substrate resource by its atespace and name.
+// ObjectRef references a Substrate resource by its Atespace and name.
 type ObjectRef struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// The atespace of the referenced resource. This field should be empty if the
-	// target resource is global-scoped, but references to objects in the same
-	// atespace as the referrer must still populate this field.
+	// Atespace of the referenced resource, or empty when referencing a global
+	// resource (such as Atespace or Worker).
 	//
+	// Must be populated explicitly even when referencing a resource in the same
+	// Atespace as the referrer.
+	//
+	// (--
 	// References to atespaced resources should add `+k8s:subfield(atespace)=+k8s:required`
-	// References to non-atespaced resources should add `+k8s:subfield(atespace)=+k8s:forbidden`
+	// References to global resources should add `+k8s:subfield(atespace)=+k8s:forbidden`
+	// --)
+	//
 	// +k8s:optional
 	// +k8s:format=k8s-short-name
 	Atespace string `protobuf:"bytes,1,opt,name=atespace,proto3" json:"atespace,omitempty"`
-	// The name of the referenced resource. This field is required.
+	// Name of the referenced resource.
 	//
 	// +k8s:required
 	// +k8s:format=k8s-short-name
@@ -2757,57 +2915,81 @@ func (x *ObjectRef) GetName() string {
 	return ""
 }
 
+// ActorTemplate is an immutable blueprint in an Atespace that defines the
+// containers, volumes, compute resources, placement constraints, and snapshot
+// configuration for Actors.
+//
+// To roll out a new container image or configuration change, create a new
+// ActorTemplate and either create new Actors from it or update suspended Actors
+// to reference it via UpdateActor.
 type ActorTemplate struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Common resource metadata: atespace, name, uid, version, timestamps.
+	// Standard resource metadata.
+	//
+	// `atespace` and `name` are set by the caller on create and are immutable.
+	// `uid`, `version`, and timestamps are managed by the server.
 	//
 	// +k8s:required
 	// +k8s:subfield(atespace)=+k8s:required
 	Metadata *ResourceMetadata `protobuf:"bytes,1,opt,name=metadata,proto3" json:"metadata,omitempty"`
-	// worker_selector restricts which worker pools actors from this template
-	// may use, by matching the pools' labels. Unset, every pool is eligible.
+	// Label selector matched against `Worker.labels` (copied from the owning
+	// WorkerPool's labels) to restrict which Workers may host Actors using this
+	// template.
 	//
-	// The pool decides the sandbox class an actor runs in, so this selector is
-	// also how a template pins one: if the cluster runs pools of more than one
-	// sandbox class and the workload needs a particular one, select only pools
-	// of that class. An actor booting with no snapshot and no selector may land
-	// on a pool of any class, and keeps that class from its first checkpoint on.
+	// When unset, any WorkerPool is eligible. Once an actor has a snapshot (from
+	// a Tag, golden snapshot, or checkpoint), subsequent resumes are locked to
+	// the `sandbox_class` recorded on that snapshot.
 	//
 	// +k8s:optional
 	WorkerSelector *Selector `protobuf:"bytes,2,opt,name=worker_selector,json=workerSelector,proto3" json:"worker_selector,omitempty"`
+	// Application containers that run together inside the Actor's sandbox,
+	// sharing a network namespace and mounted volumes. At least one container is
+	// required.
+	//
 	// +k8s:required # at least one container
 	// +k8s:maxItems=10
 	// +k8s:listType=map
 	// +k8s:listMapKey=name
 	Containers []*Container `protobuf:"bytes,3,rep,name=containers,proto3" json:"containers,omitempty"`
+	// Volumes available to be mounted by containers in this template.
+	//
 	// +k8s:optional
 	// +k8s:maxItems=32
 	// +k8s:listType=map
 	// +k8s:listMapKey=name
 	Volumes []*Volume `protobuf:"bytes,4,rep,name=volumes,proto3" json:"volumes,omitempty"`
-	// snapshot_config selects what actor snapshots capture and where they are
-	// stored. Optional: when omitted, every field takes its default.
+	// Snapshot fidelity, storage location, and golden snapshot settings for
+	// Actors using this template.
+	//
+	// Optional. When omitted, all subfields take their defaults (`MEMORY`
+	// fidelity and `ENABLED` golden snapshot mode).
 	//
 	// +k8s:optional
 	SnapshotConfig *SnapshotConfig `protobuf:"bytes,5,opt,name=snapshot_config,json=snapshotConfig,proto3" json:"snapshot_config,omitempty"`
-	// resources is the actor's compute size. Both cpu and memory limits are
-	// required: the scheduler books them against worker capacity, and a
-	// micro-VM is booted at that size.
+	// Compute resource limits for the Actor sandbox as a whole.
+	//
+	// Both `cpu_millicores` and `memory_bytes` limits are required: the scheduler
+	// reserves them against Worker capacity, and microVM sandboxes are sized to
+	// them at boot.
 	//
 	// +k8s:required
 	// +k8s:customValidation # cpu and memory limits are both set
 	Resources *ResourceRequirements `protobuf:"bytes,6,opt,name=resources,proto3" json:"resources,omitempty"`
-	// Egress policy for the golden Actor during initialization. The template
-	// controller creates a policy with these rules through CreateActorEgressPolicy
-	// before it resumes the golden Actor. Other Actors created from this template
-	// do not inherit this policy, including when using the golden snapshot.
-	// If absent, no policy is created. When set, at least one rule is required.
-	// May not be set when snapshot_config.golden_snapshot_config.mode is DISABLED.
+	// Egress policy applied only to the temporary golden Actor while building
+	// this template's golden snapshot.
+	//
+	// Regular Actors created from this template do not inherit this policy, even
+	// when booting from the golden snapshot. Attach an EgressPolicy to each Actor
+	// via CreateActorEgressPolicy instead. Forbidden when
+	// `snapshot_config.golden_snapshot_config.mode` is `DISABLED`.
 	//
 	// +ate:preview=GoldenEgressPolicy
 	// +k8s:ifDisabled(GoldenEgressPolicy)=+k8s:forbidden
 	// +k8s:optional
 	GoldenEgressPolicy *EgressPolicyTemplate `protobuf:"bytes,9,opt,name=golden_egress_policy,json=goldenEgressPolicy,proto3" json:"golden_egress_policy,omitempty"`
+	// Status of the ActorTemplate managed by the server, including golden
+	// snapshot build progress. Ignored on input.
+	//
 	// +k8s:optional
 	Status        *ActorTemplateStatus `protobuf:"bytes,7,opt,name=status,proto3" json:"status,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -2900,10 +3082,11 @@ func (x *ActorTemplate) GetStatus() *ActorTemplateStatus {
 	return nil
 }
 
-// ResourceRequirements are the compute resources a workload may use.
+// ResourceRequirements specifies the compute resources an Actor sandbox may
+// use.
 type ResourceRequirements struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// limits is the maximum amount of compute resources allowed.
+	// Maximum compute resources allocated to the Actor sandbox.
 	//
 	// +k8s:optional
 	Limits        *Resources `protobuf:"bytes,1,opt,name=limits,proto3" json:"limits,omitempty"`
@@ -2948,16 +3131,16 @@ func (x *ResourceRequirements) GetLimits() *Resources {
 	return nil
 }
 
-// Resources is an amount of each compute resource.
+// Resources specifies quantities of CPU and memory.
 type Resources struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// cpu_millicores is CPU in millicores (1000 = one core). 0 means none.
+	// CPU allocation in millicores (`1000` equals one full vCPU core).
 	//
 	// +k8s:optional
 	// +k8s:minimum=0
 	// +k8s:maximum=999999 # less than 1000 cores
 	CpuMillicores int64 `protobuf:"varint,1,opt,name=cpu_millicores,json=cpuMillicores,proto3" json:"cpu_millicores,omitempty"`
-	// memory_bytes is memory in bytes. 0 means none.
+	// Memory allocation in bytes.
 	//
 	// +k8s:optional
 	// +k8s:minimum=0
@@ -3010,20 +3193,34 @@ func (x *Resources) GetMemoryBytes() int64 {
 	return 0
 }
 
+// GoldenSnapshotStatus reports the progress and outcome of an ActorTemplate's
+// automatic golden snapshot build.
 type GoldenSnapshotStatus struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// golden_tag owns the immutable snapshot built by the template controller.
-	// Set after tagging the snapshot and deleting the temporary golden Actor.
+	// Tag holding the completed golden snapshot built for this ActorTemplate.
+	//
+	// Set once the temporary golden Actor has been snapshotted, tagged, and
+	// deleted. New Actors created from this template without an explicit
+	// `source_tag` automatically seed from this Tag once it is set.
+	//
 	// +k8s:optional
 	// +k8s:subfield(atespace)=+k8s:required
 	GoldenTag *ObjectRef `protobuf:"bytes,1,opt,name=golden_tag,json=goldenTag,proto3" json:"golden_tag,omitempty"`
-	// snapshot_time is when the golden-actor warmup ends and the
-	// golden snapshot may be taken.
+	// Timestamp when the golden Actor's warmup period ends and its snapshot may
+	// be captured.
+	//
+	// When every container in the template defines a `wakeup_probe`, the snapshot
+	// is taken immediately after ResumeActor succeeds. Otherwise the reconciler
+	// waits a 20 second warmup period after resume.
 	//
 	// +k8s:optional
 	SnapshotTime *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=snapshot_time,json=snapshotTime,proto3" json:"snapshot_time,omitempty"`
-	// error_message is set when the golden snapshot build fails and will not be
-	// retried, formatted as "<Reason>: <detail>". A nonempty value is terminal.
+	// Terminal failure reason and message if the golden snapshot build failed,
+	// formatted as `<Reason>: <detail>`.
+	//
+	// A populated value indicates that the golden snapshot build failed
+	// permanently and will not be retried. Actors created from this template fall
+	// back to booting from the container image.
 	//
 	// +k8s:optional
 	// +k8s:maxLength=4096
@@ -3083,8 +3280,13 @@ func (x *GoldenSnapshotStatus) GetErrorMessage() string {
 	return ""
 }
 
+// ActorTemplateStatus holds the status of an ActorTemplate managed by the
+// server.
 type ActorTemplateStatus struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
+	// Progress and result of the background golden snapshot build for this
+	// template.
+	//
 	// +k8s:optional
 	GoldenSnapshotStatus *GoldenSnapshotStatus `protobuf:"bytes,1,opt,name=golden_snapshot_status,json=goldenSnapshotStatus,proto3" json:"golden_snapshot_status,omitempty"`
 	unknownFields        protoimpl.UnknownFields
@@ -3128,17 +3330,17 @@ func (x *ActorTemplateStatus) GetGoldenSnapshotStatus() *GoldenSnapshotStatus {
 	return nil
 }
 
-// SnapshotConfig selects what actor snapshots capture and where they are
+// SnapshotConfig selects what Actor snapshots capture and where they are
 // stored.
 type SnapshotConfig struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// storage_location is the base object-storage URI snapshots of actors on
-	// this version are stored under. If unset, ate-api-server's
-	// --snapshot-location is used. Requires the PerTemplateSnapshotLocation preview
-	// gate. Each path segment may contain only ASCII letters, digits, '_' and
-	// '-'. Each owner's snapshots are stored under
-	// <storage_location>/atespaces/..., so no segment may be "atespaces" in any
-	// letter case.
+	// Base object storage URI under which snapshots of Actors using this template
+	// are stored.
+	//
+	// Requires the `PerTemplateSnapshotLocation` preview gate. When unset, the
+	// server's default snapshot storage location is used. Each path segment may
+	// contain only ASCII letters, digits, `_`, and `-`, and must not be
+	// `atespaces` in any letter case.
 	//
 	// +ate:preview=PerTemplateSnapshotLocation
 	// +k8s:ifDisabled(PerTemplateSnapshotLocation)=+k8s:forbidden
@@ -3146,20 +3348,21 @@ type SnapshotConfig struct {
 	// +k8s:maxLength=1024
 	// +k8s:customValidation # Validate URI
 	StorageLocation string `protobuf:"bytes,1,opt,name=storage_location,json=storageLocation,proto3" json:"storage_location,omitempty"`
-	// preferred_fidelity is the highest fidelity the system packages when it
-	// snapshots the actor.
-	// It is a best-effort ceiling, not a guarantee: the system never packages
-	// more than this level, and it may package less when a layer cannot be
-	// captured or is too expensive to capture at the time, for example memory
-	// under host pressure. A process resumed in place on its worker keeps its
-	// memory regardless of this setting. Defaults to MEMORY when unset.
+	// State fidelity captured when suspending Actors using this template.
+	//
+	// SuspendActor always captures at this level. On ResumeActor, the restore may
+	// downgrade to a lower level when required: to `VOLUMES` after an Actor's
+	// `actor_template` is updated, or to `ROOTFS` when the assigned Worker cannot
+	// warm restore the snapshot's runtime version. Defaults to `MEMORY` when
+	// unset.
 	//
 	// +k8s:required
 	// +k8s:minimum=1
 	// +k8s:maximum=3 # keep this in sync with the SnapshotFidelity enum
 	PreferredFidelity SnapshotFidelity `protobuf:"varint,2,opt,name=preferred_fidelity,json=preferredFidelity,proto3,enum=substrate.ateapi.v1.SnapshotFidelity" json:"preferred_fidelity,omitempty"`
-	// golden_snapshot_config configures automated golden snapshot creation.
-	// Golden snapshots are enabled when this config is omitted.
+	// Configuration for automatic golden snapshot creation.
+	//
+	// Defaults to `ENABLED` when omitted.
 	//
 	// +k8s:optional
 	GoldenSnapshotConfig *GoldenSnapshotConfig `protobuf:"bytes,3,opt,name=golden_snapshot_config,json=goldenSnapshotConfig,proto3" json:"golden_snapshot_config,omitempty"`
@@ -3218,11 +3421,14 @@ func (x *SnapshotConfig) GetGoldenSnapshotConfig() *GoldenSnapshotConfig {
 	return nil
 }
 
-// GoldenSnapshotConfig controls automated golden snapshot creation for a template.
+// GoldenSnapshotConfig controls automated golden snapshot creation for an
+// ActorTemplate.
 type GoldenSnapshotConfig struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// mode defaults to ENABLED when unspecified. DISABLED skips creating the
-	// template's golden actor and tag.
+	// Whether to build a golden snapshot for the template.
+	//
+	// Defaults to `ENABLED` when unspecified. `DISABLED` skips creating the
+	// golden Actor and Tag.
 	//
 	// +k8s:required
 	// +k8s:minimum=1
@@ -3269,53 +3475,65 @@ func (x *GoldenSnapshotConfig) GetMode() GoldenSnapshotMode {
 	return GoldenSnapshotMode_GOLDEN_SNAPSHOT_MODE_UNSPECIFIED
 }
 
-// Container is a single application container of an ActorTemplate.
+// Container defines a single application container within an ActorTemplate.
 type Container struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
+	// Unique name of the container within the ActorTemplate.
+	//
 	// +k8s:required
 	// +k8s:format=k8s-short-name
 	Name string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
-	// image is the OCI image reference the container runs:
-	// [registry/]repository[:tag]@digest. Must be pinned by digest
-	// (e.g. "name@sha256:...").
+	// OCI image reference for the container, formatted as
+	// `[registry/]repository[:tag]@digest`.
+	//
+	// Must be pinned by digest (for example, `name@sha256:...`).
 	//
 	// +k8s:required
 	// +k8s:maxLength=512 # matches ImageVolumeSource.reference's bound
 	// +k8s:customValidation # must be a well-formed image reference, pinned by digest
 	Image string `protobuf:"bytes,2,opt,name=image,proto3" json:"image,omitempty"`
-	// Entrypoint array; when set, the image's ENTRYPOINT and CMD are both
-	// ignored and the process argv is command + args. Unlike Kubernetes,
-	// $(VAR_NAME) references are NOT expanded.
+	// Entrypoint argv array that overrides the image's `ENTRYPOINT` and `CMD`.
+	//
+	// When set, the container process executes `command` followed by `args`.
+	// `$(VAR_NAME)` environment variable references are not expanded.
 	//
 	// +k8s:optional
 	// +k8s:maxItems=64
 	// +k8s:listType=atomic
 	// +k8s:eachVal=+k8s:maxLength=4096 # argv strings; guardrail, not a contract
 	Command []string `protobuf:"bytes,3,rep,name=command,proto3" json:"command,omitempty"`
-	// Arguments to the entrypoint; the image's CMD is used if unset (unless
-	// command is set, which discards the image's CMD).
+	// Arguments passed to the container entrypoint.
+	//
+	// When unset, the image's `CMD` is used unless `command` is set.
+	// `$(VAR_NAME)` environment variable references are not expanded.
 	//
 	// +k8s:optional
 	// +k8s:maxItems=64
 	// +k8s:listType=atomic
 	// +k8s:eachVal=+k8s:maxLength=4096 # argv strings; guardrail, not a contract
 	Args []string `protobuf:"bytes,4,rep,name=args,proto3" json:"args,omitempty"`
-	// Env variables to set in the container's process environment. Unlike
-	// Kubernetes, $(VAR_NAME) references are NOT expanded in this field.
+	// Environment variables set in the container's process environment.
+	//
+	// `$(VAR_NAME)` references are not expanded.
 	//
 	// +k8s:optional
 	// +k8s:maxItems=32
 	// +k8s:listType=map # each variable is set at most once
 	// +k8s:listMapKey=name
 	Env []*EnvVar `protobuf:"bytes,5,rep,name=env,proto3" json:"env,omitempty"`
-	// wakeup_probe gates each wakeup on this container: ResumeActor returns
-	// only after the probe answers HTTP 200. Without it, ResumeActor returns
-	// as soon as the container has started, which may be before it listens.
+	// HTTP readiness probe polled on every ResumeActor call.
+	//
+	// When set, ResumeActor returns only after the probe responds with HTTP 200.
+	// When unset, ResumeActor returns as soon as the container process has
+	// started, which may precede the application listening on its port.
 	//
 	// +k8s:optional
 	WakeupProbe *WakeupProbe `protobuf:"bytes,6,opt,name=wakeup_probe,json=wakeupProbe,proto3" json:"wakeup_probe,omitempty"`
-	// Keyed by mount_path: each path hosts exactly one mount, while a volume
-	// may be mounted at multiple paths.
+	// Volumes mounted into the container's filesystem, keyed by `mount_path`.
+	//
+	// Each `mount_path` may appear at most once per container, and mount paths
+	// may not nest inside one another. The same Volume may be mounted at multiple
+	// paths or across multiple containers.
 	//
 	// +k8s:optional
 	// +k8s:maxItems=32
@@ -3323,13 +3541,17 @@ type Container struct {
 	// +k8s:listMapKey=mount_path
 	// +k8s:customValidation # mounts must not nest
 	VolumeMounts []*VolumeMount `protobuf:"bytes,7,rep,name=volume_mounts,json=volumeMounts,proto3" json:"volume_mounts,omitempty"`
-	// security_context adjusts the container's security settings. Unset leaves
-	// the default capability set.
+	// Security settings for the container's process.
+	//
+	// When unset, the container runs with the default Linux capability set
+	// (`AUDIT_WRITE`, `KILL`, and `NET_BIND_SERVICE`).
 	//
 	// +k8s:optional
 	SecurityContext *SecurityContext `protobuf:"bytes,8,opt,name=security_context,json=securityContext,proto3" json:"security_context,omitempty"`
-	// resources carries this container's compute limits, enforced inside the
-	// actor's sandbox. A limit of 0 leaves that resource unlimited.
+	// Per container compute limits enforced inside the Actor's sandbox.
+	//
+	// A limit of `0` leaves that resource unbounded within the ActorTemplate's
+	// overall `resources` limit.
 	//
 	// +k8s:optional
 	Resources     *ResourceRequirements `protobuf:"bytes,9,opt,name=resources,proto3" json:"resources,omitempty"`
@@ -3430,11 +3652,10 @@ func (x *Container) GetResources() *ResourceRequirements {
 	return nil
 }
 
-// SecurityContext holds security settings for a container's process,
-// modeling a subset of the Kubernetes container securityContext.
+// SecurityContext holds security settings for a container's process.
 type SecurityContext struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// capabilities adjusts the Linux capabilities of the container's process.
+	// Linux capabilities adjustments for the container's process.
 	//
 	// +k8s:optional
 	Capabilities  *Capabilities `protobuf:"bytes,1,opt,name=capabilities,proto3" json:"capabilities,omitempty"`
@@ -3480,21 +3701,27 @@ func (x *SecurityContext) GetCapabilities() *Capabilities {
 }
 
 // Capabilities adjusts a container's Linux capabilities relative to the
-// default set. Drop applies first, then add, so a capability in both is
-// granted. Capabilities are named without the "CAP_" prefix; "ALL" in drop
-// removes the whole default set.
+// default capability set (`AUDIT_WRITE`, `KILL`, and `NET_BIND_SERVICE`).
+//
+// `drop` is applied first and `add` second, so a capability listed in both is
+// granted. Capabilities are named without the `CAP_` prefix (for example,
+// `NET_BIND_SERVICE`). Specifying `ALL` in `drop` removes the entire default
+// set.
 type Capabilities struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// add lists capabilities to grant on top of the default set. "ALL" is
-	// rejected: name the individual capabilities the container needs.
+	// Capabilities to grant on top of the default set (after applying `drop`).
+	//
+	// `ALL` is rejected. List each required capability explicitly.
 	//
 	// +k8s:optional
 	// +k8s:maxItems=64
 	// +k8s:listType=set
 	// +k8s:customValidation # a Linux capability name; "ALL" not accepted
 	Add []string `protobuf:"bytes,1,rep,name=add,proto3" json:"add,omitempty"`
-	// drop lists capabilities to remove from the default set. "ALL" drops the
-	// whole set, so drop+add expresses an exact set rather than a relative one.
+	// Capabilities to remove from the default set.
+	//
+	// Specifying `ALL` drops every default capability, so combining
+	// `drop: ["ALL"]` with `add` grants only the capabilities listed in `add`.
 	//
 	// +k8s:optional
 	// +k8s:maxItems=64
@@ -3549,20 +3776,22 @@ func (x *Capabilities) GetDrop() []string {
 	return nil
 }
 
-// EnvVar supplies one environment variable to a container. Values are not
-// expanded with Kubernetes-style $(VAR) references.
+// EnvVar supplies a single environment variable to a container.
+//
+// Values are passed literally and are not expanded with `$(VAR)` references.
 type EnvVar struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// name may be any printable ASCII character except '='.
+	// Environment variable name, consisting of printable ASCII characters except
+	// `=`.
 	//
 	// +k8s:required
-	// +k8s:maxLength=256 # guardrail;
+	// +k8s:maxLength=256 # guardrail
 	// +k8s:customValidation # printable ASCII except '='
 	Name string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
-	// value is the literal value.
+	// Literal value of the environment variable.
 	//
 	// +k8s:optional
-	// +k8s:maxLength=32768 # guardrail;
+	// +k8s:maxLength=32768 # guardrail
 	Value         string `protobuf:"bytes,2,opt,name=value,proto3" json:"value,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -3612,18 +3841,24 @@ func (x *EnvVar) GetValue() string {
 	return ""
 }
 
-// WakeupProbe tells the platform when a container is serving. It is
-// polled on every wakeup, whether the actor cold-boots or is restored from a
-// snapshot, and not again while the actor stays running. A probe that does
-// not answer 200 within timeout_seconds crashes the actor.
+// WakeupProbe tells Substrate when a container is ready to serve traffic after
+// wakeup.
+//
+// Polled on every ResumeActor call (both cold boots and snapshot restores), and
+// not polled again while the Actor remains running. If the probe does not
+// return HTTP 200 within `timeout_seconds`, the wakeup fails: the Actor
+// transitions to `CRASHED` state if the caller's ResumeActor request is still
+// active, or remains in `RESUMING` state for a retry if the caller's deadline
+// expired first.
 type WakeupProbe struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// http_get is the request to poll.
+	// HTTP GET request to poll against the container.
 	//
 	// +k8s:required
 	HttpGet *HttpGetAction `protobuf:"bytes,1,opt,name=http_get,json=httpGet,proto3" json:"http_get,omitempty"`
-	// timeout_seconds is how long to keep polling before giving up.
-	// Defaults to 30 when unset.
+	// Maximum time in seconds to poll for HTTP 200 before failing the wakeup.
+	//
+	// Defaults to `30` when unset.
 	//
 	// +k8s:required
 	// +k8s:minimum=1
@@ -3677,18 +3912,19 @@ func (x *WakeupProbe) GetTimeoutSeconds() int32 {
 	return 0
 }
 
-// HttpGetAction describes the HTTP GET the probe polls.
+// HttpGetAction describes the HTTP GET request a WakeupProbe sends.
 type HttpGetAction struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// path must be a URL path starting with "/", using only RFC 3986
-	// path-segment characters, without query or fragment.
-	// Defaults to "/" when unset.
+	// URL path to request, starting with `/` and using only RFC 3986 path segment
+	// characters without a query string or fragment.
+	//
+	// Defaults to `/` when unset.
 	//
 	// +k8s:required
 	// +k8s:maxLength=1024
 	// +k8s:customValidation # RFC 3986 path shape; no regex/pattern tag exists
 	Path string `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
-	// port is the container port to connect to.
+	// Container TCP port to connect to.
 	//
 	// +k8s:required
 	// +k8s:minimum=1
@@ -3742,30 +3978,38 @@ func (x *HttpGetAction) GetPort() int32 {
 	return 0
 }
 
+// Volume declares a named storage or projection volume in an ActorTemplate that
+// containers can mount via `VolumeMount`.
+//
+// Exactly one of `durable_dir`, `external`, `system_info`, or `image` must be
+// set.
 type Volume struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// name of the volume. Must be a DNS label.
+	// Name of the volume, referenced by `VolumeMount.name`. Must be a DNS label.
 	//
 	// +k8s:required
 	// +k8s:format=k8s-short-name
 	Name string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
-	// Exactly one of durable_dir / external / image / system_info must be
-	// set.
+	// Durable directory backed by local node disk that persists across resumes
+	// and is captured in every snapshot fidelity level (including `VOLUMES`).
 	//
 	// +k8s:optional
 	// +k8s:unionMember
 	DurableDir *DurableDirVolumeSource `protobuf:"bytes,2,opt,name=durable_dir,json=durableDir,proto3" json:"durable_dir,omitempty"`
-	// external is a CSI volume: provisioned for this actor from a template.
+	// Dedicated CSI volume provisioned for each Actor from a StorageClass.
 	//
 	// +ate:preview=ExternalVolumes
 	// +k8s:ifDisabled(ExternalVolumes)=+k8s:forbidden
 	// +k8s:optional
 	// +k8s:unionMember
 	External *ExternalVolumeSource `protobuf:"bytes,3,opt,name=external,proto3" json:"external,omitempty"`
+	// Read only projected volume populated with per actor identity files and CA
+	// trust bundles on every resume.
+	//
 	// +k8s:optional
 	// +k8s:unionMember
 	SystemInfo *SystemInfoVolumeSource `protobuf:"bytes,4,opt,name=system_info,json=systemInfo,proto3" json:"system_info,omitempty"`
-	// image mounts the contents of an OCI image, read-only.
+	// Read only volume populated with the filesystem contents of an OCI image.
 	//
 	// +k8s:optional
 	// +k8s:unionMember
@@ -3839,11 +4083,15 @@ func (x *Volume) GetImage() *ImageVolumeSource {
 	return nil
 }
 
-// ExternalVolumeSource is a CSI volume provisioned for the actor from a template.
+// ExternalVolumeSource configures a CSI volume provisioned per Actor from a
+// template.
 type ExternalVolumeSource struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// template provisions a volume for this actor alone; it is deleted with the
-	// actor.
+	// Template used to provision a dedicated CSI volume for each Actor.
+	//
+	// Required (as the sole member of the `ExternalVolumeSource` union). The
+	// provisioned volume is attached across resumes and deleted when the Actor is
+	// deleted.
 	//
 	// +k8s:optional
 	// +k8s:unionMember
@@ -3889,13 +4137,10 @@ func (x *ExternalVolumeSource) GetTemplate() *ExternalVolumeTemplate {
 	return nil
 }
 
-// ImageVolumeSource mounts the contents of an OCI image, read-only. The
-// reference must include a digest: changing the image invalidates
-// snapshots.
+// ImageVolumeSource mounts the filesystem contents of an OCI image read only.
 type ImageVolumeSource struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// reference is the OCI image reference. Must include a digest
-	// (e.g. "name@sha256:...").
+	// OCI image reference, pinned by digest (for example, `name@sha256:...`).
 	//
 	// +k8s:required
 	// +k8s:maxLength=512
@@ -3942,8 +4187,13 @@ func (x *ImageVolumeSource) GetReference() string {
 	return ""
 }
 
-// DurableDirVolumeSource is a durable directory on rootfs that persists
-// across resumes and participates in snapshots.
+// DurableDirVolumeSource is an empty configuration message for a `durable_dir`
+// Volume.
+//
+// Files written to a `durable_dir` mount are stored in a dedicated directory
+// included in every snapshot (`VOLUMES`, `ROOTFS`, and `MEMORY`), so data
+// persists even when an Actor is updated to a new ActorTemplate and cold
+// booted.
 type DurableDirVolumeSource struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -3980,17 +4230,17 @@ func (*DurableDirVolumeSource) Descriptor() ([]byte, []int) {
 	return file_api_ateapi_v1_ateapi_proto_rawDescGZIP(), []int{42}
 }
 
-// ExternalVolumeTemplate provisions an external volume per actor; the volume
-// lives only as long as the actor.
+// ExternalVolumeTemplate defines the size and StorageClass for provisioning a
+// dedicated CSI volume per Actor.
 type ExternalVolumeTemplate struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// capacity_bytes is the size of the volume to create, in bytes. Required.
+	// Requested capacity of the volume in bytes.
 	//
 	// +k8s:required
 	// +k8s:minimum=1
 	CapacityBytes int64 `protobuf:"varint,1,opt,name=capacity_bytes,json=capacityBytes,proto3" json:"capacity_bytes,omitempty"`
-	// storage_class_name names the cluster-scoped Kubernetes StorageClass to
-	// create the volume from. Required.
+	// Name of the cluster scoped Kubernetes StorageClass used to provision the
+	// volume.
 	//
 	// +k8s:required
 	// +k8s:format=k8s-long-name
@@ -4043,14 +4293,15 @@ func (x *ExternalVolumeTemplate) GetStorageClassName() string {
 	return ""
 }
 
-// SystemInfoVolumeSource is a read-only volume of substrate-generated
-// per-actor files (identity fields, projected trust bundles), regenerated by
-// atelet on every Run/Restore.
+// SystemInfoVolumeSource is a read only volume of files Substrate generates for
+// each Actor (identity metadata and CA trust bundles), regenerated on every
+// resume.
 type SystemInfoVolumeSource struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// data_sources lists the projections to place within the volume. At most
-	// one actor_metadata entry may appear, and file paths must be unique
-	// across all entries.
+	// Projections to populate inside the volume.
+	//
+	// At most one `actor_metadata` entry may appear, and target file paths must
+	// be unique across all entries.
 	//
 	// +k8s:optional
 	// +k8s:maxItems=8
@@ -4098,13 +4349,19 @@ func (x *SystemInfoVolumeSource) GetDataSources() []*SystemInfoDataSource {
 	return nil
 }
 
+// SystemInfoDataSource selects a source of files to project into a
+// SystemInfoVolumeSource.
+//
+// Exactly one of `actor_metadata` or `trust_bundle` must be set.
 type SystemInfoDataSource struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Exactly one of actor_metadata / trust_bundle must be set.
+	// Projects selected identity fields of the Actor to files in the volume.
 	//
 	// +k8s:optional
 	// +k8s:unionMember
 	ActorMetadata *ActorMetadataDataSource `protobuf:"bytes,1,opt,name=actor_metadata,json=actorMetadata,proto3" json:"actor_metadata,omitempty"`
+	// Projects one or more named CA trust bundles to a PEM file in the volume.
+	//
 	// +k8s:optional
 	// +k8s:unionMember
 	TrustBundle   *TrustBundleDataSource `protobuf:"bytes,2,opt,name=trust_bundle,json=trustBundle,proto3" json:"trust_bundle,omitempty"`
@@ -4156,12 +4413,13 @@ func (x *SystemInfoDataSource) GetTrustBundle() *TrustBundleDataSource {
 	return nil
 }
 
-// ActorMetadataDataSource projects the actor's identity fields to files, one
-// per item.
+// ActorMetadataDataSource projects an Actor's identity fields to files in a
+// `system_info` volume, one file per item.
 type ActorMetadataDataSource struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// items must not project the same field twice, and item paths must be
-	// unique.
+	// Identity field projections.
+	//
+	// Each `field` and each target `path` may appear at most once.
 	//
 	// +k8s:required
 	// +k8s:minItems=1
@@ -4211,16 +4469,21 @@ func (x *ActorMetadataDataSource) GetItems() []*ActorMetadataItem {
 	return nil
 }
 
-// ActorMetadataItem projects one actor identity field to a file at path,
-// a clean relative Unix path from the root of the volume.
+// ActorMetadataItem projects a single Actor identity field to a relative file
+// path inside a `system_info` volume.
 type ActorMetadataItem struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
+	// Identity field of the Actor to project.
+	//
 	// +k8s:required
 	// +k8s:minimum=1
 	// +k8s:maximum=3 # keep this in sync with the ActorMetadataField enum
 	Field ActorMetadataField `protobuf:"varint,1,opt,name=field,proto3,enum=substrate.ateapi.v1.ActorMetadataField" json:"field,omitempty"`
-	// path must be a clean relative Unix path: at most 16 '/'-separated
-	// segments, none of them empty, '.' or '..', and no NUL byte.
+	// Relative Unix path from the root of the volume where the field value is
+	// written.
+	//
+	// Must have at most 16 `/` separated segments, with no empty, `.`, or `..`
+	// segments and no NUL bytes.
 	//
 	// +k8s:required
 	// +k8s:minLength=1
@@ -4275,19 +4538,20 @@ func (x *ActorMetadataItem) GetPath() string {
 	return ""
 }
 
-// TrustBundleDataSource projects the trust anchors of the named trust bundle
-// to a PEM file at path. Supported names are allowlisted in atelet.
+// TrustBundleDataSource projects the CA certificates of one or more named trust
+// bundles to a single PEM file inside a `system_info` volume.
 type TrustBundleDataSource struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// One or more named trust bundles to unify and place at the specified path.
+	// Trust bundle names whose CA certificates are combined and written to
+	// `path`:
 	//
-	// Substrate supports a short list of predefined names:
+	// * `egress-mitm.ate.dev`: Trust anchors for the Substrate egress gateway TLS
+	//   interceptor, required when the Actor uses `HttpsRule` egress rules.
+	// * `system-roots.ate.dev`: Public CA root certificates bundled with
+	//   Substrate.
 	//
-	// * egress-mitm.ate.dev --- The trust anchors for the Substrate egress
-	//   gateway TLS man-in-the-middle interceptor.
-	//
-	// * system-roots.ate.dev --- A selection of well-known public CA root certificates,
-	//   built into Substrate
+	// Admission validates only length and uniqueness; an unknown bundle name or
+	// missing `ClusterTrustBundle` fails on the node during ResumeActor.
 	//
 	// +k8s:required
 	// +k8s:minItems=1
@@ -4296,8 +4560,11 @@ type TrustBundleDataSource struct {
 	// +k8s:eachVal=+k8s:maxLength=253
 	// +k8s:listType=set
 	Names []string `protobuf:"bytes,1,rep,name=names,proto3" json:"names,omitempty"`
-	// path must be a clean relative Unix path: at most 16 '/'-separated
-	// segments, none of them empty, '.' or '..', and no NUL byte.
+	// Relative Unix path from the root of the volume where the combined PEM
+	// bundle is written.
+	//
+	// Must have at most 16 `/` separated segments, with no empty, `.`, or `..`
+	// segments and no NUL bytes.
 	//
 	// +k8s:required
 	// +k8s:minLength=1
@@ -4352,17 +4619,19 @@ func (x *TrustBundleDataSource) GetPath() string {
 	return ""
 }
 
-// VolumeMount mounts a named Volume into a container.
+// VolumeMount mounts a named Volume from the ActorTemplate into a container.
 type VolumeMount struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// name must match the name of a Volume.
+	// Name of the Volume to mount. Must match an entry in
+	// `ActorTemplate.volumes`.
 	//
 	// +k8s:required
 	// +k8s:format=k8s-short-name
 	Name string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
-	// mount_path within the container. Must be a clean absolute Unix path:
-	// must start with '/', not be '/', and contain no ':', '..', '.', '//',
-	// trailing '/', or control characters.
+	// Absolute Unix path inside the container where the volume is mounted.
+	//
+	// Must start with `/`, must not be `/`, and must not contain `:`, `..`, `.`,
+	// `//`, a trailing `/`, or control characters.
 	//
 	// +k8s:required
 	// +k8s:maxLength=4096
@@ -4416,9 +4685,10 @@ func (x *VolumeMount) GetMountPath() string {
 	return ""
 }
 
+// CreateAtespaceRequest is the request message for CreateAtespace.
 type CreateAtespaceRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// The atespace to create.
+	// Atespace to create.
 	//
 	// +k8s:required
 	Atespace      *Atespace `protobuf:"bytes,1,opt,name=atespace,proto3" json:"atespace,omitempty"`
@@ -4463,8 +4733,11 @@ func (x *CreateAtespaceRequest) GetAtespace() *Atespace {
 	return nil
 }
 
+// GetAtespaceRequest is the request message for GetAtespace.
 type GetAtespaceRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
+	// Reference to the Atespace to retrieve (`atespace` must be empty).
+	//
 	// +k8s:required
 	// +k8s:beta(since: "0.0")=+k8s:subfield(atespace)=+k8s:forbidden # TODO: get rid of beta prefix
 	Atespace      *ObjectRef `protobuf:"bytes,1,opt,name=atespace,proto3" json:"atespace,omitempty"`
@@ -4509,6 +4782,7 @@ func (x *GetAtespaceRequest) GetAtespace() *ObjectRef {
 	return nil
 }
 
+// ListAtespacesRequest is the request message for ListAtespaces.
 type ListAtespacesRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Pagination controls.
@@ -4556,11 +4830,13 @@ func (x *ListAtespacesRequest) GetOptions() *ListOptions {
 	return nil
 }
 
+// ListAtespacesResponse is the response message for ListAtespaces.
 type ListAtespacesResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// The page of atespaces. This list may be empty even if there are more results.
+	// Page of Atespaces.
 	Atespaces []*Atespace `protobuf:"bytes,1,rep,name=atespaces,proto3" json:"atespaces,omitempty"`
-	// Pagination token for the next page. Empty if this is the last page.
+	// Token to retrieve the next page of results, or empty if there are no more
+	// results.
 	NextPageToken string `protobuf:"bytes,2,opt,name=next_page_token,json=nextPageToken,proto3" json:"next_page_token,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -4610,12 +4886,15 @@ func (x *ListAtespacesResponse) GetNextPageToken() string {
 	return ""
 }
 
+// DeleteAtespaceRequest is the request message for DeleteAtespace.
 type DeleteAtespaceRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
+	// Reference to the Atespace to delete (`atespace` must be empty).
+	//
 	// +k8s:required
 	// +k8s:beta(since: "0.0")=+k8s:subfield(atespace)=+k8s:forbidden # TODO: get rid of beta prefix
 	Atespace *ObjectRef `protobuf:"bytes,1,opt,name=atespace,proto3" json:"atespace,omitempty"`
-	// Optional per-delete preconditions.
+	// Optional preconditions for the delete operation.
 	//
 	// +k8s:optional
 	Options       *DeleteOptions `protobuf:"bytes,2,opt,name=options,proto3" json:"options,omitempty"`
@@ -4667,10 +4946,13 @@ func (x *DeleteAtespaceRequest) GetOptions() *DeleteOptions {
 	return nil
 }
 
+// CreateActorTemplateRequest is the request message for CreateActorTemplate.
 type CreateActorTemplateRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// The actor template version to create. Server-assigned metadata (uid,
-	// version, timestamps) is ignored, as are the status fields.
+	// ActorTemplate to create.
+	//
+	// Server assigned metadata (`uid`, `version`, timestamps) and `status` are
+	// ignored on input.
 	//
 	// +k8s:required
 	// +k8s:customValidation # volume_mounts must reference declared volumes; golden policy requires golden snapshots
@@ -4716,8 +4998,11 @@ func (x *CreateActorTemplateRequest) GetActorTemplate() *ActorTemplate {
 	return nil
 }
 
+// GetActorTemplateRequest is the request message for GetActorTemplate.
 type GetActorTemplateRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
+	// Reference to the ActorTemplate to retrieve.
+	//
 	// +k8s:required
 	// +k8s:subfield(atespace)=+k8s:required
 	ActorTemplate *ObjectRef `protobuf:"bytes,1,opt,name=actor_template,json=actorTemplate,proto3" json:"actor_template,omitempty"`
@@ -4762,10 +5047,11 @@ func (x *GetActorTemplateRequest) GetActorTemplate() *ObjectRef {
 	return nil
 }
 
+// ListActorTemplatesRequest is the request message for ListActorTemplates.
 type ListActorTemplatesRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// The atespace to list actor templates from. Empty lists across all
-	// atespaces.
+	// Atespace to list ActorTemplates from, or empty to list across all
+	// Atespaces.
 	//
 	// +k8s:optional
 	// +k8s:format=k8s-short-name
@@ -4822,12 +5108,13 @@ func (x *ListActorTemplatesRequest) GetOptions() *ListOptions {
 	return nil
 }
 
+// ListActorTemplatesResponse is the response message for ListActorTemplates.
 type ListActorTemplatesResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// The page of actor template versions. This list may be empty even if
-	// there are more results.
+	// Page of ActorTemplates.
 	ActorTemplates []*ActorTemplate `protobuf:"bytes,1,rep,name=actor_templates,json=actorTemplates,proto3" json:"actor_templates,omitempty"`
-	// Pagination token for the next page. Empty if this is the last page.
+	// Token to retrieve the next page of results, or empty if there are no more
+	// results.
 	NextPageToken string `protobuf:"bytes,2,opt,name=next_page_token,json=nextPageToken,proto3" json:"next_page_token,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -4877,12 +5164,15 @@ func (x *ListActorTemplatesResponse) GetNextPageToken() string {
 	return ""
 }
 
+// DeleteActorTemplateRequest is the request message for DeleteActorTemplate.
 type DeleteActorTemplateRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
+	// Reference to the ActorTemplate to delete.
+	//
 	// +k8s:required
 	// +k8s:subfield(atespace)=+k8s:required
 	ActorTemplate *ObjectRef `protobuf:"bytes,1,opt,name=actor_template,json=actorTemplate,proto3" json:"actor_template,omitempty"`
-	// Optional per-delete preconditions.
+	// Optional preconditions for the delete operation.
 	//
 	// +k8s:optional
 	Options       *DeleteOptions `protobuf:"bytes,2,opt,name=options,proto3" json:"options,omitempty"`
@@ -4934,8 +5224,11 @@ func (x *DeleteActorTemplateRequest) GetOptions() *DeleteOptions {
 	return nil
 }
 
+// GetActorRequest is the request message for GetActor.
 type GetActorRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
+	// Reference to the Actor to retrieve.
+	//
 	// +k8s:required
 	// +k8s:subfield(atespace)=+k8s:required
 	Actor         *ObjectRef `protobuf:"bytes,1,opt,name=actor,proto3" json:"actor,omitempty"`
@@ -4980,10 +5273,10 @@ func (x *GetActorRequest) GetActor() *ObjectRef {
 	return nil
 }
 
-// Request to create a new Actor.
+// CreateActorRequest is the request message for CreateActor.
 type CreateActorRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// The actor to create.
+	// Actor to create.
 	//
 	// +k8s:required
 	Actor         *Actor `protobuf:"bytes,1,opt,name=actor,proto3" json:"actor,omitempty"`
@@ -5028,15 +5321,20 @@ func (x *CreateActorRequest) GetActor() *Actor {
 	return nil
 }
 
-// Request to update mutable fields on an existing Actor.
-// May be called regardless of the actor's current state.
-// Changes take effect on the next ResumeActor call.
+// UpdateActorRequest is the request message for UpdateActor.
 type UpdateActorRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// The actor to update.
-	// actor.metadata.atespace and actor.metadata.name identify which resource to
-	// update.
-	// actor.metadata.version and actor.metadata.uid are required preconditions.
+	// Actor state to apply.
+	//
+	// `actor.metadata.atespace` and `actor.metadata.name` identify the Actor to
+	// update. `actor.metadata.uid` and `actor.metadata.version` are required for
+	// optimistic locking: populate them from a prior GetActor read so the server
+	// rejects the update with `ABORTED` if the Actor was recreated (`uid`
+	// changed) or modified by a concurrent update (`version` changed).
+	//
+	// Updating `actor_template` requires the Actor to be `SUSPENDED`. Updating
+	// `worker_selector` is allowed in any non-deleting state. Both take effect on
+	// the next ResumeActor call.
 	//
 	// +k8s:required
 	// +k8s:opaqueType # updates are handled in 2 steps, do not descend
@@ -5084,12 +5382,15 @@ func (x *UpdateActorRequest) GetActor() *Actor {
 	return nil
 }
 
+// SuspendActorRequest is the request message for SuspendActor.
 type SuspendActorRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
+	// Reference to the Actor to suspend.
+	//
 	// +k8s:required
 	// +k8s:subfield(atespace)=+k8s:required
 	Actor *ObjectRef `protobuf:"bytes,1,opt,name=actor,proto3" json:"actor,omitempty"`
-	// options controls how SuspendActor persists the actor's snapshot.
+	// Options controlling how the Actor's snapshot is persisted during suspend.
 	//
 	// +k8s:optional
 	Options       *SuspendOptions `protobuf:"bytes,2,opt,name=options,proto3" json:"options,omitempty"`
@@ -5141,9 +5442,11 @@ func (x *SuspendActorRequest) GetOptions() *SuspendOptions {
 	return nil
 }
 
+// SuspendActorResponse is the response message for SuspendActor.
 type SuspendActorResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Actor         *Actor                 `protobuf:"bytes,1,opt,name=actor,proto3" json:"actor,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Actor state after the suspend completes, in `SUSPENDED` state.
+	Actor         *Actor `protobuf:"bytes,1,opt,name=actor,proto3" json:"actor,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -5185,11 +5488,13 @@ func (x *SuspendActorResponse) GetActor() *Actor {
 	return nil
 }
 
-// SuspendOptions tunes how SuspendActor persists the actor's snapshot.
+// SuspendOptions configures how SuspendActor persists the Actor's snapshot.
 type SuspendOptions struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// mode selects when SuspendActor returns relative to the snapshot reaching
-	// durable storage. If unspecified, defaults to DURABILITY_MODE_ASYNCHRONOUS.
+	// Controls whether SuspendActor waits for the snapshot upload to object
+	// storage before returning.
+	//
+	// Defaults to `ASYNCHRONOUS` when unspecified.
 	//
 	// +k8s:optional
 	// +k8s:minimum=1
@@ -5236,8 +5541,11 @@ func (x *SuspendOptions) GetMode() DurabilityMode {
 	return DurabilityMode_DURABILITY_MODE_UNSPECIFIED
 }
 
+// ResumeActorRequest is the request message for ResumeActor.
 type ResumeActorRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
+	// Reference to the Actor to resume.
+	//
 	// +k8s:required
 	// +k8s:subfield(atespace)=+k8s:required
 	Actor         *ObjectRef `protobuf:"bytes,1,opt,name=actor,proto3" json:"actor,omitempty"`
@@ -5282,11 +5590,15 @@ func (x *ResumeActorRequest) GetActor() *ObjectRef {
 	return nil
 }
 
+// ResumeActorResponse is the response message for ResumeActor.
 type ResumeActorResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	Actor *Actor                 `protobuf:"bytes,1,opt,name=actor,proto3" json:"actor,omitempty"`
-	// True if a resume workflow was executed to activate the actor.
-	// False if the actor was already RUNNING.
+	// Actor state after the resume completes, in `RUNNING` state with
+	// `status.worker_assignment` populated.
+	Actor *Actor `protobuf:"bytes,1,opt,name=actor,proto3" json:"actor,omitempty"`
+	// `true` if this call ran the resume workflow (from `SUSPENDED` or finishing
+	// an interrupted `RESUMING` transition), or `false` if the Actor was already
+	// `RUNNING`.
 	Resumed       bool `protobuf:"varint,2,opt,name=resumed,proto3" json:"resumed,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -5336,10 +5648,11 @@ func (x *ResumeActorResponse) GetResumed() bool {
 	return false
 }
 
-// RevertActorRequest identifies the Actor to revert.
+// RevertActorRequest is the request message for RevertActor.
 type RevertActorRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// actor to revert.
+	// Reference to the Actor to revert.
+	//
 	// +k8s:required
 	// +k8s:subfield(atespace)=+k8s:required
 	Actor         *ObjectRef `protobuf:"bytes,1,opt,name=actor,proto3" json:"actor,omitempty"`
@@ -5384,11 +5697,12 @@ func (x *RevertActorRequest) GetActor() *ObjectRef {
 	return nil
 }
 
-// RevertActorResponse holds the reverted Actor.
+// RevertActorResponse is the response message for RevertActor.
 type RevertActorResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// actor as it stands after the revert, SUSPENDED and still holding the
-	// external snapshot it was reverted to.
+	// Actor after the revert, in `SUSPENDED` state at its last completed durable
+	// snapshot (or with no snapshot if none exists, ready to boot from the
+	// template image).
 	Actor         *Actor `protobuf:"bytes,1,opt,name=actor,proto3" json:"actor,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -5431,12 +5745,15 @@ func (x *RevertActorResponse) GetActor() *Actor {
 	return nil
 }
 
+// DeleteActorRequest is the request message for DeleteActor.
 type DeleteActorRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
+	// Reference to the Actor to delete.
+	//
 	// +k8s:required
 	// +k8s:subfield(atespace)=+k8s:required
 	Actor *ObjectRef `protobuf:"bytes,1,opt,name=actor,proto3" json:"actor,omitempty"`
-	// Optional per-delete preconditions.
+	// Optional preconditions for the delete operation.
 	//
 	// +k8s:optional
 	Options       *DeleteOptions `protobuf:"bytes,2,opt,name=options,proto3" json:"options,omitempty"`
@@ -5488,15 +5805,15 @@ func (x *DeleteActorRequest) GetOptions() *DeleteOptions {
 	return nil
 }
 
-// GetActorEgressPolicyRequest identifies an Actor's egress policy.
+// GetActorEgressPolicyRequest is the request message for GetActorEgressPolicy.
 type GetActorEgressPolicyRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// The parent Actor of the egress policy resource to retrieve.
+	// Parent Actor of the EgressPolicy to retrieve.
 	//
 	// +k8s:required
 	// +k8s:subfield(atespace)=+k8s:required
 	Actor *ObjectRef `protobuf:"bytes,1,opt,name=actor,proto3" json:"actor,omitempty"`
-	// Name of the singleton egress policy. Must be "default".
+	// Name of the singleton EgressPolicy. Must be `default`.
 	//
 	// +k8s:required
 	// +k8s:format=k8s-short-name
@@ -5550,18 +5867,21 @@ func (x *GetActorEgressPolicyRequest) GetName() string {
 	return ""
 }
 
-// CreateActorEgressPolicyRequest creates an egress policy for an Actor.
+// CreateActorEgressPolicyRequest is the request message for
+// CreateActorEgressPolicy.
 //
 // +k8s:customValidation # atespaces must match
 type CreateActorEgressPolicyRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Parent Actor under which to create the policy resource.
+	// Parent Actor under which to create the EgressPolicy.
 	//
 	// +k8s:required
 	// +k8s:subfield(atespace)=+k8s:required
 	Actor *ObjectRef `protobuf:"bytes,1,opt,name=actor,proto3" json:"actor,omitempty"`
-	// The policy to create. metadata.name must be "default" and
-	// metadata.atespace must match actor.atespace.
+	// EgressPolicy to create.
+	//
+	// `metadata.name` must be `default` and `metadata.atespace` must match
+	// `actor.atespace`.
 	//
 	// +k8s:required
 	EgressPolicy  *EgressPolicy `protobuf:"bytes,2,opt,name=egress_policy,json=egressPolicy,proto3" json:"egress_policy,omitempty"`
@@ -5613,18 +5933,24 @@ func (x *CreateActorEgressPolicyRequest) GetEgressPolicy() *EgressPolicy {
 	return nil
 }
 
-// UpdateActorEgressPolicyRequest replaces an Actor's egress policy.
+// UpdateActorEgressPolicyRequest is the request message for
+// UpdateActorEgressPolicy.
 //
 // +k8s:customValidation
 type UpdateActorEgressPolicyRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Parent Actor under which to update the policy resource.
+	// Parent Actor under which to update the EgressPolicy.
 	//
 	// +k8s:required
 	// +k8s:subfield(atespace)=+k8s:required
 	Actor *ObjectRef `protobuf:"bytes,1,opt,name=actor,proto3" json:"actor,omitempty"`
-	// Full replacement. Metadata UID and version are required preconditions;
-	// atespace and name are immutable and must match the existing policy.
+	// Replacement EgressPolicy.
+	//
+	// `metadata.atespace` and `metadata.name` (`default`) must match the existing
+	// policy. `metadata.uid` and `metadata.version` are required for optimistic
+	// locking: populate them from a prior GetActorEgressPolicy read so the server
+	// rejects the update with `ABORTED` if the policy was recreated (`uid`
+	// changed) or modified by a concurrent update (`version` changed).
 	//
 	// +k8s:required
 	EgressPolicy  *EgressPolicy `protobuf:"bytes,2,opt,name=egress_policy,json=egressPolicy,proto3" json:"egress_policy,omitempty"`
@@ -5676,21 +6002,22 @@ func (x *UpdateActorEgressPolicyRequest) GetEgressPolicy() *EgressPolicy {
 	return nil
 }
 
-// DeleteActorEgressPolicyRequest identifies an Actor's egress policy.
+// DeleteActorEgressPolicyRequest is the request message for
+// DeleteActorEgressPolicy.
 type DeleteActorEgressPolicyRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// The parent Actor of the egress policy resource to delete.
+	// Parent Actor of the EgressPolicy to delete.
 	//
 	// +k8s:required
 	// +k8s:subfield(atespace)=+k8s:required
 	Actor *ObjectRef `protobuf:"bytes,1,opt,name=actor,proto3" json:"actor,omitempty"`
-	// Name of the singleton egress policy. Must be "default".
+	// Name of the singleton EgressPolicy. Must be `default`.
 	//
 	// +k8s:required
 	// +k8s:format=k8s-short-name
 	// +k8s:customValidation # must be "default"
 	Name string `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
-	// Optional per-delete preconditions.
+	// Optional preconditions for the delete operation.
 	//
 	// +k8s:optional
 	Options       *DeleteOptions `protobuf:"bytes,3,opt,name=options,proto3" json:"options,omitempty"`
@@ -5749,8 +6076,11 @@ func (x *DeleteActorEgressPolicyRequest) GetOptions() *DeleteOptions {
 	return nil
 }
 
+// GetTagRequest is the request message for GetTag.
 type GetTagRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
+	// Reference to the Tag to retrieve.
+	//
 	// +k8s:required
 	// +k8s:subfield(atespace)=+k8s:required
 	Tag           *ObjectRef `protobuf:"bytes,1,opt,name=tag,proto3" json:"tag,omitempty"`
@@ -5795,24 +6125,22 @@ func (x *GetTagRequest) GetTag() *ObjectRef {
 	return nil
 }
 
-// Request message for MintActorJwt.
+// MintActorJwtRequest is the request message for MintActorJwt.
 type MintActorJwtRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// The actor for which the JWT should be issued.
-	//
-	// Must be a valid actor that currently exists according to the actor store.
+	// Existing Actor whose identity the minted JWT asserts.
 	//
 	// +k8s:required
 	Actor *ObjectRef `protobuf:"bytes,1,opt,name=actor,proto3" json:"actor,omitempty"`
-	// The audiences the minted JWT is bound to. Tokens are only issued with
-	// audience bindings, so at least one is required.
+	// Audience strings placed in the minted JWT's `aud` claim. At least one
+	// audience is required.
 	//
 	// +k8s:required
 	// +k8s:maxItems=16 # guardrail; tokens realistically bind a handful of audiences
 	// +k8s:listType=set
 	// +k8s:eachVal=+k8s:maxLength=512 # audiences are caller-defined URIs; bound only
 	Audiences []string `protobuf:"bytes,2,rep,name=audiences,proto3" json:"audiences,omitempty"`
-	// Lifetime of the JWT, in seconds.
+	// Lifetime of the minted JWT, in seconds (between 300 and 3600).
 	//
 	// +k8s:required
 	// +k8s:minimum=300
@@ -5873,30 +6201,31 @@ func (x *MintActorJwtRequest) GetExpirationSeconds() int64 {
 	return 0
 }
 
-// Response message for MintActorJwt.
+// MintActorJwtResponse is the response message for MintActorJwt.
 type MintActorJwtResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// The signed actor JWT. Relying parties verify it with OpenID Connect
-	// Discovery against its issuer.
+	// Signed OIDC JWT asserting the Actor's identity.
+	//
+	// Relying parties verify the token using OpenID Connect Discovery against its
+	// issuer (`<iss>/.well-known/openid-configuration`).
 	//
 	// Claims:
 	//
-	// * iss: The issuer URL. Relying parties fetch
-	//   `<iss>/.well-known/openid-configuration` to find the signing keys.
-	// * sub: `actor/<atespace>/<name>`.
-	// * aud: The requested audiences, always a JSON array.
-	// * exp, nbf, iat: Numeric Unix timestamps. nbf is five minutes before iat
-	//   to allow for clock skew.
-	// * jti: A random token ID.
-	// * `actor.ate.dev`: A JSON object with the actor's `atespace`,
-	//   `actorName`, and `actorUID`.
+	// * `iss`: Cluster OIDC issuer URL.
+	// * `sub`: `actor/<atespace>/<name>`.
+	// * `aud`: Requested audiences as a JSON array.
+	// * `exp`, `nbf`, `iat`: Numeric Unix timestamps (`nbf` is set 5 minutes
+	//   before `iat` to allow for clock skew).
+	// * `jti`: Unique token identifier.
+	// * `actor.ate.dev`: JSON object containing `atespace`, `actorName`, and
+	//   `actorUID`.
 	//
-	// The subject and claim name say the token speaks for the actor itself.
-	// A token minted for a Substrate component acting on the actor's behalf
-	// (WorkerService.MintWorkerActorJwt) uses `worker-for-actor` in both places
-	// instead, so a relying party can grant the two different access.
+	// Tokens minted for a worker component acting on an actor's behalf via
+	// `WorkerService.MintWorkerActorJwt` use `worker-for-actor` in `sub` and
+	// `worker-for-actor.ate.dev` instead, allowing relying parties to distinguish
+	// direct actor traffic from worker operations.
 	ActorJwt string `protobuf:"bytes,1,opt,name=actor_jwt,json=actorJwt,proto3" json:"actor_jwt,omitempty"`
-	// expire_time is when actor_jwt expires. Equal to its exp claim.
+	// Expiration timestamp of `actor_jwt`, matching its `exp` claim.
 	ExpireTime    *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=expire_time,json=expireTime,proto3" json:"expire_time,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -5946,9 +6275,10 @@ func (x *MintActorJwtResponse) GetExpireTime() *timestamppb.Timestamp {
 	return nil
 }
 
+// ListTagsRequest is the request message for ListTags.
 type ListTagsRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// The atespace to list tags from. Empty lists across all atespaces.
+	// Atespace to list Tags from, or empty to list across all Atespaces.
 	//
 	// +k8s:optional
 	// +k8s:format=k8s-short-name
@@ -6005,10 +6335,14 @@ func (x *ListTagsRequest) GetOptions() *ListOptions {
 	return nil
 }
 
+// ListTagsResponse is the response message for ListTags.
 type ListTagsResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Tags          []*Tag                 `protobuf:"bytes,1,rep,name=tags,proto3" json:"tags,omitempty"`
-	NextPageToken string                 `protobuf:"bytes,2,opt,name=next_page_token,json=nextPageToken,proto3" json:"next_page_token,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Page of Tags.
+	Tags []*Tag `protobuf:"bytes,1,rep,name=tags,proto3" json:"tags,omitempty"`
+	// Token to retrieve the next page of results, or empty if there are no more
+	// results.
+	NextPageToken string `protobuf:"bytes,2,opt,name=next_page_token,json=nextPageToken,proto3" json:"next_page_token,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -6057,25 +6391,26 @@ func (x *ListTagsResponse) GetNextPageToken() string {
 	return ""
 }
 
-// Request to tag the external snapshot a suspended Actor holds.
+// CreateTagRequest is the request message for CreateTag.
 //
-// The tag captures whichever snapshot the Actor holds when the call runs. An
-// Actor keeps no snapshot history — each suspend replaces the last — so a
-// suspend that lands between taking a snapshot and tagging it moves what gets
-// tagged. That race is inherent and accepted: the tag means "the Actor as of
-// this call", not "the snapshot some earlier suspend returned".
+// Captures the snapshot currently held by `tag.source_actor` when the call
+// runs. Because each SuspendActor call replaces the Actor's previous snapshot,
+// a suspend that completes before CreateTag runs changes which snapshot is
+// tagged.
 //
-// The tag is given its own copy of that snapshot, so it survives the Actor
-// being suspended again or deleted.
-// To retry a create that failed or timed out, delete the tag first,
-// which collects whatever that attempt stranded, and create it again.
+// The Tag receives its own copy of the snapshot in object storage, so
+// subsequent suspends or deletion of the source Actor do not affect the Tag. If
+// CreateTag fails or times out after reserving the Tag name, call DeleteTag to
+// clean up the incomplete Tag before retrying.
 //
 // +k8s:customValidation # metadata.atespace must match source_actor.atespace
 type CreateTagRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// The tag to create. metadata.atespace, metadata.name, scope and source_actor
-	// are honored; metadata.atespace must match source_actor's, and status is
-	// ignored on write.
+	// Tag to create.
+	//
+	// `metadata.atespace`, `metadata.name`, `scope`, and `source_actor` are
+	// required. `metadata.atespace` must match `source_actor.atespace`, and
+	// `status` is ignored on input.
 	//
 	// +k8s:required
 	Tag           *Tag `protobuf:"bytes,1,opt,name=tag,proto3" json:"tag,omitempty"`
@@ -6120,14 +6455,18 @@ func (x *CreateTagRequest) GetTag() *Tag {
 	return nil
 }
 
-// Request to update mutable fields on an existing Tag.
-// The tag keeps its address: the snapshot it points at cannot be changed.
+// UpdateTagRequest is the request message for UpdateTag.
+//
+// Only `tag.scope` may be updated. The snapshot a Tag points at is immutable.
 type UpdateTagRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// The tag to update.
-	// tag.metadata.atespace and tag.metadata.name identify which resource to
-	// update.
-	// tag.metadata.version and tag.metadata.uid are required preconditions
+	// Tag to update.
+	//
+	// `tag.metadata.atespace` and `tag.metadata.name` identify the Tag.
+	// `tag.metadata.uid` and `tag.metadata.version` are required for optimistic
+	// locking: populate them from a prior GetTag read so the server rejects the
+	// update with `ABORTED` if the Tag was recreated (`uid` changed) or modified
+	// by a concurrent update (`version` changed).
 	//
 	// +k8s:required
 	// +k8s:opaqueType # updates are handled in 2 steps, do not descend
@@ -6175,12 +6514,15 @@ func (x *UpdateTagRequest) GetTag() *Tag {
 	return nil
 }
 
+// DeleteTagRequest is the request message for DeleteTag.
 type DeleteTagRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
+	// Reference to the Tag to delete.
+	//
 	// +k8s:required
 	// +k8s:subfield(atespace)=+k8s:required
 	Tag *ObjectRef `protobuf:"bytes,1,opt,name=tag,proto3" json:"tag,omitempty"`
-	// Optional per-delete preconditions.
+	// Optional preconditions for the delete operation.
 	//
 	// +k8s:optional
 	Options       *DeleteOptions `protobuf:"bytes,2,opt,name=options,proto3" json:"options,omitempty"`
@@ -6232,18 +6574,19 @@ func (x *DeleteTagRequest) GetOptions() *DeleteOptions {
 	return nil
 }
 
-// DeleteOptions are the optional guards a Delete request may carry.
+// DeleteOptions specifies optimistic concurrency preconditions for a delete
+// operation.
 type DeleteOptions struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Delete only if the resource is still at this version, that is, unchanged
-	// since the caller read it. Zero skips the check.
+	// Delete only if the stored resource is at this `metadata.version` (`ABORTED`
+	// on mismatch). `0` skips the version check.
 	//
 	// +k8s:optional
 	// +k8s:minimum=1
 	Version int64 `protobuf:"varint,1,opt,name=version,proto3" json:"version,omitempty"`
-	// Delete only if the resource still has this uid, that is, it is the one
-	// the caller read and not a later one created under the same name. Empty
-	// skips the check.
+	// Delete only if the stored resource has this `metadata.uid` (`ABORTED` on
+	// mismatch), preventing accidental deletion of a recreated resource with the
+	// same name. Empty skips the UID check.
 	//
 	// +k8s:optional
 	// +k8s:format=k8s-uuid
@@ -6296,18 +6639,24 @@ func (x *DeleteOptions) GetUid() string {
 	return ""
 }
 
-// ListOptions are the pagination controls a List request may carry.
+// ListOptions specifies pagination controls for a list request.
+//
+// Pagination provides soft consistency: resources created or deleted between
+// page requests may be included or omitted across pages.
 type ListOptions struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Requested page size; the server may return fewer, or occasionally
-	// slightly more. If unspecified, defaults to a server-chosen value;
-	// values above 1000 are coerced to 1000.
+	// Maximum number of items to return in the page.
+	//
+	// The server may return fewer items. Defaults to `1000` when unset, and
+	// values above `1000` are capped at `1000`.
 	//
 	// +k8s:optional
 	// +k8s:minimum=1
 	PageSize int32 `protobuf:"varint,1,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
-	// Pagination token from a previous response of the same List method.
-	// Omit or leave empty for the first request.
+	// Continuation token from `next_page_token` of a previous response from the
+	// same List method and scope (`atespace`, or `worker` for
+	// ListWorkerActorAssignments; `INVALID_ARGUMENT` if replayed across methods
+	// or scopes). Leave empty for the first page.
 	//
 	// +k8s:optional
 	// +k8s:maxLength=256
@@ -6360,11 +6709,12 @@ func (x *ListOptions) GetPageToken() string {
 	return ""
 }
 
-// ListWorkerActorAssignmentsRequest asks for a page of the Actors hosted by a
-// given Worker.
+// ListWorkerActorAssignmentsRequest is the request message for
+// ListWorkerActorAssignments.
 type ListWorkerActorAssignmentsRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// The Worker under which to list Actors.
+	// Reference to the Worker whose assigned Actors are listed (`atespace` must
+	// be empty).
 	//
 	// +k8s:required
 	// +k8s:beta(since: "0.0")=+k8s:subfield(atespace)=+k8s:forbidden # TODO: get rid of beta prefix
@@ -6421,12 +6771,14 @@ func (x *ListWorkerActorAssignmentsRequest) GetOptions() *ListOptions {
 	return nil
 }
 
-// ListWorkerActorAssignmentsResponse is one page of a Worker's Actors.
+// ListWorkerActorAssignmentsResponse is the response message for
+// ListWorkerActorAssignments.
 type ListWorkerActorAssignmentsResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// The Actors this page of the listing covers.
+	// Page of ActorAssignments on the Worker.
 	ActorAssignments []*ActorAssignment `protobuf:"bytes,1,rep,name=actor_assignments,json=actorAssignments,proto3" json:"actor_assignments,omitempty"`
-	// Pagination token for the next page. Empty if this is the last page.
+	// Token to retrieve the next page of results, or empty if there are no more
+	// results.
 	NextPageToken string `protobuf:"bytes,2,opt,name=next_page_token,json=nextPageToken,proto3" json:"next_page_token,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -6476,6 +6828,7 @@ func (x *ListWorkerActorAssignmentsResponse) GetNextPageToken() string {
 	return ""
 }
 
+// ListWorkersRequest is the request message for ListWorkers.
 type ListWorkersRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Pagination controls.
@@ -6523,11 +6876,13 @@ func (x *ListWorkersRequest) GetOptions() *ListOptions {
 	return nil
 }
 
+// ListWorkersResponse is the response message for ListWorkers.
 type ListWorkersResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// The page of workers. This list may be empty even if there are more results.
+	// Page of Workers.
 	Workers []*Worker `protobuf:"bytes,1,rep,name=workers,proto3" json:"workers,omitempty"`
-	// Pagination token for the next page. Empty if this is the last page.
+	// Token to retrieve the next page of results, or empty if there are no more
+	// results.
 	NextPageToken string `protobuf:"bytes,2,opt,name=next_page_token,json=nextPageToken,proto3" json:"next_page_token,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -6577,9 +6932,10 @@ func (x *ListWorkersResponse) GetNextPageToken() string {
 	return ""
 }
 
+// GetWorkerRequest is the request message for GetWorker.
 type GetWorkerRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// The Worker to fetch. atespace is always empty; Workers are global-scoped.
+	// Reference to the Worker to retrieve (`atespace` must be empty).
 	//
 	// +k8s:required
 	// +k8s:beta(since: "0.0")=+k8s:subfield(atespace)=+k8s:forbidden # TODO: get rid of beta prefix
@@ -6625,9 +6981,10 @@ func (x *GetWorkerRequest) GetWorker() *ObjectRef {
 	return nil
 }
 
+// CreateWorkerRequest is the request message for CreateWorker.
 type CreateWorkerRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// The Worker to register.
+	// Worker to create.
 	//
 	// +k8s:required
 	Worker        *Worker `protobuf:"bytes,1,opt,name=worker,proto3" json:"worker,omitempty"`
@@ -6672,19 +7029,21 @@ func (x *CreateWorkerRequest) GetWorker() *Worker {
 	return nil
 }
 
+// UpdateWorkerRequest is the request message for UpdateWorker.
 type UpdateWorkerRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// The Worker to update.
-	// worker.metadata.name identifies which resource to update. atespace is
-	// always empty; Workers are global-scoped.
-	// worker.metadata.version and worker.metadata.uid are required preconditions.
+	// Replacement Worker state.
 	//
-	// labels is the only field an update may change. Every other field is
-	// replaced with what the request carries, and a field left unset is cleared —
-	// so read the Worker, change what you mean to change, and send the whole
-	// thing back. A request that alters an immutable field, by changing it or by
-	// omitting it, returns INVALID_ARGUMENT naming the field. status is
-	// output-only and whatever it carries is ignored.
+	// `worker.metadata.name` identifies the Worker to update (`atespace` must be
+	// empty). `worker.metadata.uid` and `worker.metadata.version` are required
+	// for optimistic locking: populate them from a prior GetWorker read so the
+	// server rejects the update with `ABORTED` if the Worker was recreated (`uid`
+	// changed) or modified by a concurrent update (`version` changed).
+	//
+	// `labels` is the only mutable field on UpdateWorker. Because UpdateWorker
+	// replaces the resource, all immutable fields must match the stored Worker or
+	// the request is rejected with `INVALID_ARGUMENT`. `status` is ignored on
+	// input.
 	//
 	// +k8s:required
 	// +k8s:opaqueType # updates are handled in 2 steps, do not descend
@@ -6732,14 +7091,15 @@ func (x *UpdateWorkerRequest) GetWorker() *Worker {
 	return nil
 }
 
+// DeleteWorkerRequest is the request message for DeleteWorker.
 type DeleteWorkerRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// The Worker to deregister.
+	// Reference to the Worker to delete (`atespace` must be empty).
 	//
 	// +k8s:required
 	// +k8s:beta(since: "0.0")=+k8s:subfield(atespace)=+k8s:forbidden # TODO: get rid of beta prefix
 	Worker *ObjectRef `protobuf:"bytes,1,opt,name=worker,proto3" json:"worker,omitempty"`
-	// Optional per-delete preconditions.
+	// Optional preconditions for the delete operation.
 	//
 	// +k8s:optional
 	Options       *DeleteOptions `protobuf:"bytes,2,opt,name=options,proto3" json:"options,omitempty"`
@@ -6791,9 +7151,10 @@ func (x *DeleteWorkerRequest) GetOptions() *DeleteOptions {
 	return nil
 }
 
+// DrainWorkerRequest is the request message for DrainWorker.
 type DrainWorkerRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// The Worker to mark as terminating.
+	// Reference to the Worker to mark as `DRAINING` (`atespace` must be empty).
 	//
 	// +k8s:required
 	// +k8s:beta(since: "0.0")=+k8s:subfield(atespace)=+k8s:forbidden # TODO: get rid of beta prefix
@@ -6839,10 +7200,10 @@ func (x *DrainWorkerRequest) GetWorker() *ObjectRef {
 	return nil
 }
 
-// DrainWorkerResponse holds the drained Worker.
+// DrainWorkerResponse is the response message for DrainWorker.
 type DrainWorkerResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// The worker being drained.
+	// Worker in `DRAINING` state.
 	Worker        *Worker `protobuf:"bytes,1,opt,name=worker,proto3" json:"worker,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -6885,10 +7246,10 @@ func (x *DrainWorkerResponse) GetWorker() *Worker {
 	return nil
 }
 
-// MarkWorkerAvailableRequest names the Worker to mark ACTIVE.
+// MarkWorkerAvailableRequest is the request message for MarkWorkerAvailable.
 type MarkWorkerAvailableRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// The Worker to mark ACTIVE.
+	// Reference to the Worker to mark `ACTIVE` (`atespace` must be empty).
 	//
 	// +k8s:required
 	// +k8s:beta(since: "0.0")=+k8s:subfield(atespace)=+k8s:forbidden # TODO: get rid of beta prefix
@@ -6934,10 +7295,10 @@ func (x *MarkWorkerAvailableRequest) GetWorker() *ObjectRef {
 	return nil
 }
 
-// MarkWorkerAvailableResponse holds the Worker marked ACTIVE.
+// MarkWorkerAvailableResponse is the response message for MarkWorkerAvailable.
 type MarkWorkerAvailableResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// The Worker marked ACTIVE.
+	// Worker marked `ACTIVE`.
 	Worker        *Worker `protobuf:"bytes,1,opt,name=worker,proto3" json:"worker,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -6980,10 +7341,11 @@ func (x *MarkWorkerAvailableResponse) GetWorker() *Worker {
 	return nil
 }
 
-// MarkWorkerUnavailableRequest names the Worker to mark UNAVAILABLE.
+// MarkWorkerUnavailableRequest is the request message for
+// MarkWorkerUnavailable.
 type MarkWorkerUnavailableRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// The Worker to mark UNAVAILABLE.
+	// Reference to the Worker to mark `UNAVAILABLE` (`atespace` must be empty).
 	//
 	// +k8s:required
 	// +k8s:beta(since: "0.0")=+k8s:subfield(atespace)=+k8s:forbidden # TODO: get rid of beta prefix
@@ -7029,10 +7391,11 @@ func (x *MarkWorkerUnavailableRequest) GetWorker() *ObjectRef {
 	return nil
 }
 
-// MarkWorkerUnavailableResponse holds the Worker marked UNAVAILABLE.
+// MarkWorkerUnavailableResponse is the response message for
+// MarkWorkerUnavailable.
 type MarkWorkerUnavailableResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// The Worker marked UNAVAILABLE.
+	// Worker marked `UNAVAILABLE`.
 	Worker        *Worker `protobuf:"bytes,1,opt,name=worker,proto3" json:"worker,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -7075,11 +7438,10 @@ func (x *MarkWorkerUnavailableResponse) GetWorker() *Worker {
 	return nil
 }
 
-// List actors with pagination. Provides "soft" guarantees: actors may be
-// missed or duplicated if the system state changes during pagination.
+// ListActorsRequest is the request message for ListActors.
 type ListActorsRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// The atespace to list actors from. Empty lists across all atespaces.
+	// Atespace to list Actors from, or empty to list across all Atespaces.
 	//
 	// +k8s:optional
 	// +k8s:format=k8s-short-name
@@ -7136,11 +7498,13 @@ func (x *ListActorsRequest) GetOptions() *ListOptions {
 	return nil
 }
 
+// ListActorsResponse is the response message for ListActors.
 type ListActorsResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// The page of actors. This list may be empty even if there are more results.
+	// Page of Actors.
 	Actors []*Actor `protobuf:"bytes,1,rep,name=actors,proto3" json:"actors,omitempty"`
-	// Pagination token for the next page. Empty if this is the last page.
+	// Token to retrieve the next page of results, or empty if there are no more
+	// results.
 	NextPageToken string `protobuf:"bytes,2,opt,name=next_page_token,json=nextPageToken,proto3" json:"next_page_token,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -7190,68 +7554,80 @@ func (x *ListActorsResponse) GetNextPageToken() string {
 	return ""
 }
 
-// Worker is a schedulable worker pod.
+// Worker represents a Substrate Worker that hosts Actor sandboxes.
 //
-// Global-scoped: metadata.atespace is always empty. metadata.name is assigned
-// by the control plane and is opaque to clients — never parse it or derive it
-// from anything else; read pod identity from the named fields below.
+// Global scoped: `metadata.atespace` is always empty, and `metadata.name` is an
+// opaque identifier. Read Worker and node coordinates from the explicit fields
+// on this message.
 //
-// labels and epoch are the only mutable fields; every other field is
-// either immutable after creation or output-only. UpdateWorker replaces the whole resource, so
-// an immutable field that a request changes — including by omitting it, which
-// would clear it — is rejected with INVALID_ARGUMENT.
+// `labels` is the only field mutable via UpdateWorker. Lifecycle state and
+// capacity are updated through dedicated RPCs (MarkWorkerAvailable,
+// MarkWorkerUnavailable, DrainWorker, and WorkerService).
 type Worker struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Output-only: name, uid, version and timestamps are all server-assigned.
-	// uid and version are echoed back on UpdateWorker as preconditions.
+	// Standard resource metadata.
+	//
+	// `atespace` must be empty. `name` is set by the caller on create and is
+	// immutable. `uid`, `version`, and timestamps are managed by the server.
 	//
 	// +k8s:required
 	// +k8s:beta(since: "0.0")=+k8s:subfield(atespace)=+k8s:forbidden # TODO: get rid of beta prefix
 	Metadata *ResourceMetadata `protobuf:"bytes,1,opt,name=metadata,proto3" json:"metadata,omitempty"`
-	// Kubernetes coordinates. Immutable, set at creation.
+	// Kubernetes namespace of the Worker Pod and WorkerPool. Immutable after
+	// creation.
 	//
 	// +k8s:required
 	// +k8s:format=k8s-short-name
 	// +k8s:immutable
 	WorkerNamespace string `protobuf:"bytes,2,opt,name=worker_namespace,json=workerNamespace,proto3" json:"worker_namespace,omitempty"`
+	// Name of the WorkerPool that manages this Worker. Immutable after creation.
+	//
 	// +k8s:required
 	// +k8s:format=k8s-long-name
 	// +k8s:immutable
 	WorkerPool string `protobuf:"bytes,3,opt,name=worker_pool,json=workerPool,proto3" json:"worker_pool,omitempty"`
+	// Name of the Kubernetes Pod running this Worker. Immutable after creation.
+	//
 	// +k8s:required
 	// +k8s:format=k8s-long-name
 	// +k8s:immutable
 	WorkerPod string `protobuf:"bytes,4,opt,name=worker_pod,json=workerPod,proto3" json:"worker_pod,omitempty"`
+	// Kubernetes Pod UID of `worker_pod`. Immutable after creation.
+	//
 	// +k8s:required
 	// +k8s:format=k8s-uuid
 	// +k8s:immutable
 	WorkerPodUid string `protobuf:"bytes,5,opt,name=worker_pod_uid,json=workerPodUid,proto3" json:"worker_pod_uid,omitempty"`
+	// Name of the node hosting `worker_pod`. Immutable after creation.
+	//
 	// +k8s:required
 	// +k8s:format=k8s-long-name
 	// +k8s:immutable
 	NodeName string `protobuf:"bytes,6,opt,name=node_name,json=nodeName,proto3" json:"node_name,omitempty"`
-	// worker_spiffe_id is the SPIFFE ID the worker pod's certificate carries.
-	// atenet-router requires it on the certificate of the worker's atunnel.
+	// SPIFFE ID carried by the Worker's mTLS certificate, verified by
+	// `atenet-router` when routing traffic to the Worker's `atunnel`. Immutable
+	// after creation.
 	//
 	// +k8s:optional
 	// +k8s:maxLength=2048
 	// +k8s:customValidation # a SPIFFE ID
 	// +k8s:immutable
 	WorkerSpiffeId string `protobuf:"bytes,7,opt,name=worker_spiffe_id,json=workerSpiffeId,proto3" json:"worker_spiffe_id,omitempty"`
-	// labels mirror the WorkerPool object's Kubernetes labels, which selectors
-	// match against.
-	// Kubernetes does not cap an object's label count, so the bound below is
-	// a generous guardrail, not a mirror of an upstream limit.
+	// Labels mirrored from the owning WorkerPool, matched against
+	// `ActorTemplate.worker_selector` and `Actor.worker_selector` during
+	// scheduling.
 	//
 	// +k8s:optional
 	// +k8s:maxProperties=64
 	// +k8s:eachKey=+k8s:format=k8s-label-key
 	// +k8s:eachVal=+k8s:format=k8s-label-value
 	Labels map[string]string `protobuf:"bytes,8,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	// Output-only server-managed state. Absent from Create/Update request
-	// payloads; whatever a request carries here is ignored. A client moves
-	// state only through DrainWorker, MarkWorkerAvailable and
-	// MarkWorkerUnavailable, and the assignments are the scheduler's.
+	// Server managed availability, capacity, epoch, and runtime state of the
+	// Worker.
+	//
+	// Ignored on CreateWorker and UpdateWorker inputs, and updated by the
+	// control plane across Worker lifecycle RPCs, WorkerService registrations,
+	// Actor placement and release, and epoch assignment reconciliation.
 	//
 	// +k8s:optional
 	Status        *WorkerStatus `protobuf:"bytes,9,opt,name=status,proto3" json:"status,omitempty"`
@@ -7352,72 +7728,75 @@ func (x *Worker) GetStatus() *WorkerStatus {
 	return nil
 }
 
+// WorkerStatus reports the server managed availability, capacity, epoch, and
+// sandbox runtime state of a Worker.
 type WorkerStatus struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
+	// Current scheduling state of the Worker.
+	//
 	// +k8s:required
 	// +k8s:minimum=1
 	// +k8s:maximum=3 # keep this in sync with the WorkerState enum
 	State WorkerState `protobuf:"varint,1,opt,name=state,proto3,enum=substrate.ateapi.v1.WorkerState" json:"state,omitempty"`
-	// The total resource capacity of the Worker.
+	// Total compute and actor count capacity of the Worker available for Actors,
+	// replaced on each `WorkerService.RegisterWorker` call.
 	//
-	// A Worker should report every dimension of resources it has available to be
-	// consumed by Actors. Any resource not specified here is assumed to be 0. An
-	// Actor which requests a resource which is not present in a Worker's
-	// capacity will prevent that Actor from running on that Worker.
-	//
-	// Shrinking capacity below allocated prevents new placements but does not
-	// evicts running Actors.
+	// Any resource dimension left unset or `0` is treated as zero capacity,
+	// preventing Actors that request that dimension from being scheduled onto
+	// this Worker.
 	//
 	// +k8s:optional
 	Capacity *WorkerResources `protobuf:"bytes,2,opt,name=capacity,proto3" json:"capacity,omitempty"`
-	// The allocated resources of the Worker.  This is the sum of all the
-	// resources consumed by the Actors currently assigned to this Worker,
-	// including their runtime's actor_overhead.
+	// Sum of resources currently reserved by Actors assigned to this Worker,
+	// including each Actor's runtime `actor_overhead`.
 	//
 	// +k8s:optional
 	Allocated *WorkerResources `protobuf:"bytes,3,opt,name=allocated,proto3" json:"allocated,omitempty"`
-	// observed_epoch is the latest epoch whose earlier Actors the control plane
-	// has crashed and released. While it is below registered_epoch, Actors placed
-	// before the worker's last restart may still be reported as running.
+	// Latest worker epoch whose stale Actor assignments from earlier epochs have
+	// been swept by the control plane.
+	//
+	// While `observed_epoch` is less than `registered_epoch`, assignments from
+	// before the Worker process's last registration are still being reconciled
+	// (releasing `SUSPENDED` and `DELETING` assignments, leaving `RESUMING`
+	// actors to their resume, and moving remaining bound actors to `CRASHED`).
 	//
 	// +k8s:optional
 	// +k8s:minimum=0
 	ObservedEpoch int64 `protobuf:"varint,4,opt,name=observed_epoch,json=observedEpoch,proto3" json:"observed_epoch,omitempty"`
-	// The sandbox classes this Worker runs and the runtimes it runs them under,
-	// as the registered worker process reports them through
-	// WorkerService.SetWorkerSandboxRuntimes. Cleared when a new worker process
-	// registers, and nothing is placed on the Worker until it reports them. One
-	// entry today, like WorkerPoolSpec.sandboxClasses. Its sandbox_class is the
-	// Worker's class.
+	// Sandbox classes and runtime compatibility versions supported by the
+	// currently registered Worker process, as reported via
+	// `WorkerService.SetWorkerSandboxRuntimes`.
+	//
+	// Cleared when a new Worker process registers. The scheduler places no Actors
+	// on the Worker until this list is populated.
 	//
 	// +k8s:optional
 	// +k8s:maxItems=1 # keep in sync with WorkerPoolSpec.sandboxClasses
 	// +k8s:listType=map
 	// +k8s:listMapKey=sandbox_class
 	SandboxClasses []*WorkerSandboxClass `protobuf:"bytes,5,rep,name=sandbox_classes,json=sandboxClasses,proto3" json:"sandbox_classes,omitempty"`
-	// ips are the worker pod's IPs, at most one per IP family, in the order
-	// Kubernetes reports them; the first is in the cluster's primary family.
-	// The worker process reports them when it registers, so they follow a pod
-	// sandbox that is recreated with new IPs.
+	// IP addresses of the Worker (at most one per IP family, in the order
+	// Kubernetes reports them), reported by the Worker process on
+	// `WorkerService.RegisterWorker`.
 	//
 	// +k8s:optional
 	// +k8s:maxItems=2
 	// +k8s:listType=atomic
 	// +k8s:customValidation # until `format=k8s-ip` is supported
 	Ips []string `protobuf:"bytes,6,rep,name=ips,proto3" json:"ips,omitempty"`
-	// issued_epoch is the last epoch handed out by
-	// WorkerService.AcquireWorkerEpoch. Each worker process acquires one at
-	// startup.
+	// Highest epoch number issued for this Worker by
+	// `WorkerService.AcquireWorkerEpoch`.
 	//
 	// +k8s:optional
 	// +k8s:minimum=0
 	IssuedEpoch int64 `protobuf:"varint,7,opt,name=issued_epoch,json=issuedEpoch,proto3" json:"issued_epoch,omitempty"`
-	// registered_epoch is the epoch of the worker process that registered last,
-	// through WorkerService.RegisterWorker. Only one worker process runs in a pod
-	// at a time, and a process registers only an epoch it acquired, so a rise
-	// means every earlier process has exited and lost its sandboxes. The control
-	// plane then crashes the Actors that ran under an earlier epoch. 0 until the
-	// first registration; a Worker takes no Actors before then.
+	// Epoch number registered by the currently running Worker process via
+	// `WorkerService.RegisterWorker`.
+	//
+	// `0` until the first registration. When `registered_epoch` increases, the
+	// control plane asynchronously sweeps Actor assignments from earlier epochs,
+	// moving bound Actors that are not `SUSPENDED`, `RESUMING`, or `DELETING` to
+	// `CRASHED` state before advancing `observed_epoch`.
 	//
 	// +k8s:optional
 	// +k8s:minimum=0
@@ -7512,24 +7891,24 @@ func (x *WorkerStatus) GetRegisteredEpoch() int64 {
 	return 0
 }
 
-// WorkerSandboxClass is one sandbox class a Worker runs, with the runtimes
-// it runs it under. A Worker has one entry per WorkerPool sandboxClasses
-// entry, so exactly one today.
+// WorkerSandboxClass describes a sandbox runtime class supported by a Worker
+// along with its default and restorable runtime versions.
 type WorkerSandboxClass struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// e.g. "gvisor", "microvm", as on WorkerPool.spec.sandboxClasses[].name.
+	// Sandbox runtime class name (`gvisor` or `microvm`), matching
+	// `WorkerPool.spec.sandboxClasses[].name`.
 	//
 	// +k8s:required
 	// +k8s:maxLength=63
 	// +k8s:customValidation # gvisor or microvm
 	SandboxClass string `protobuf:"bytes,1,opt,name=sandbox_class,json=sandboxClass,proto3" json:"sandbox_class,omitempty"`
-	// Runtime new and cold-booted actors of this class start under. Snapshots
-	// matching its version can also warm-boot on this worker.
+	// Runtime version under which newly cold booted Actors of this class start,
+	// and under which snapshots with a compatible version can warm restore.
 	//
 	// +k8s:required
 	DefaultRuntime *WorkerSandboxRuntime `protobuf:"bytes,2,opt,name=default_runtime,json=defaultRuntime,proto3" json:"default_runtime,omitempty"`
-	// Additional runtimes of this class (excluding default_runtime) that this
-	// worker can restore snapshots from right now.
+	// Additional runtime versions of this class from which this Worker can warm
+	// restore existing snapshots.
 	//
 	// +k8s:optional
 	// +k8s:maxItems=32
@@ -7590,24 +7969,23 @@ func (x *WorkerSandboxClass) GetRestorableRuntimes() []*WorkerSandboxRuntime {
 	return nil
 }
 
-// WorkerSandboxRuntime is one runtime a Worker runs for the class of its
-// WorkerSandboxClass entry. ActorSandboxRuntime, the stamp on an assignment
-// or snapshot, pairs the entry's sandbox_class with this runtime's version.
+// WorkerSandboxRuntime describes one sandbox runtime version available on a
+// Worker within a `WorkerSandboxClass`.
 type WorkerSandboxRuntime struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Compatibility version stamped onto an actor's snapshot when a checkpoint
-	// is taken on this runtime. Snapshots matching it can warm-boot on this
-	// runtime.
-	// TODO: Add the additional compatibility versions this runtime can also
-	// restore snapshots from.
+	// Compatibility version stamped onto snapshots captured under this runtime
+	// and matched when restoring snapshots onto this runtime.
+	//
+	// (-- TODO: Add the additional compatibility versions this runtime can also restore snapshots from. --)
 	//
 	// +k8s:required
 	Version *VersionedSandboxCompat `protobuf:"bytes,1,opt,name=version,proto3" json:"version,omitempty"`
-	// The resource overhead incurred by a Worker for each Actor running under
-	// this runtime, on top of the Actor's stated limits. Placement considers
-	// this when deciding if a Worker has enough capacity for an Actor, and it is
-	// accounted for in allocated. If not specified, Actors under this runtime
-	// are assumed to have negligible overhead.
+	// Memory each Actor running under this runtime costs the Worker on top of
+	// the Actor's own limits.
+	//
+	// Placement books `limits.memory_bytes` plus this overhead against the
+	// Worker's `capacity`, and `allocated` and `ActorAssignment.resources`
+	// include it. Unset means no overhead.
 	//
 	// +k8s:optional
 	ActorOverhead *RuntimeOverhead `protobuf:"bytes,2,opt,name=actor_overhead,json=actorOverhead,proto3" json:"actor_overhead,omitempty"`
@@ -7663,14 +8041,14 @@ func (x *WorkerSandboxRuntime) GetActorOverhead() *RuntimeOverhead {
 // limits: a fixed amount, plus an amount in proportion to its memory limit.
 type RuntimeOverhead struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// memory_bytes is a fixed amount of memory for each Actor.
+	// Fixed memory in bytes added for each Actor.
 	//
 	// +k8s:optional
 	// +k8s:minimum=0
 	// +k8s:maximum=1099511627776 # 1TiB
 	MemoryBytes int64 `protobuf:"varint,1,opt,name=memory_bytes,json=memoryBytes,proto3" json:"memory_bytes,omitempty"`
-	// memory_bytes_per_gib is memory per GiB of the Actor's memory limit, e.g.
-	// host page tables for a microVM's guest RAM. It scales in proportion and
+	// Memory in bytes added per GiB of the Actor's `limits.memory_bytes`, for
+	// example host page tables for a microVM's guest RAM. Scales linearly and
 	// rounds down to a byte, so an Actor with a 512MiB limit adds half of it.
 	//
 	// +k8s:optional
@@ -7725,19 +8103,20 @@ func (x *RuntimeOverhead) GetMemoryBytesPerGib() int64 {
 	return 0
 }
 
-// ActorSandboxRuntime is the runtime an actor runs under, as recorded on its
-// assignment and on the snapshots taken from it: one class and one of the
-// compatibility versions a Worker reports for it.
+// ActorSandboxRuntime records the sandbox class and runtime compatibility
+// version an Actor is running under or a Snapshot was captured under.
 type ActorSandboxRuntime struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// e.g. "gvisor", "microvm"
+	// Sandbox runtime class name (`gvisor` or `microvm`).
 	//
 	// +k8s:required
 	// +k8s:maxLength=63
 	// +k8s:customValidation # gvisor or microvm
 	SandboxClass string `protobuf:"bytes,1,opt,name=sandbox_class,json=sandboxClass,proto3" json:"sandbox_class,omitempty"`
-	// Compatibility version of the runtime. A snapshot stamped with it can
-	// warm-boot on a worker whose runtime of this class matches it.
+	// Runtime compatibility version.
+	//
+	// A snapshot stamped with this version can be warm restored on any Worker
+	// whose runtime for `sandbox_class` is compatible with it.
 	//
 	// +k8s:required
 	Version       *VersionedSandboxCompat `protobuf:"bytes,2,opt,name=version,proto3" json:"version,omitempty"`
@@ -7789,28 +8168,26 @@ func (x *ActorSandboxRuntime) GetVersion() *VersionedSandboxCompat {
 	return nil
 }
 
-// VersionedSandboxCompat holds the compatibility schema version and the
-// key-value compatibility attributes of a sandbox runtime.
+// VersionedSandboxCompat holds the compatibility schema version and key-value
+// compatibility attributes used to determine whether a snapshot can be warm
+// restored on a Worker.
 type VersionedSandboxCompat struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Compatibility schema version (e.g. "v1") defining which runtime and
-	// hardware attributes are recorded and how they are computed.
+	// Compatibility schema version (for example, `v1`) defining which runtime and
+	// hardware attributes are recorded and how they are matched.
 	//
 	// +k8s:required
 	// +k8s:maxLength=64
 	SchemaVersion string `protobuf:"bytes,1,opt,name=schema_version,json=schemaVersion,proto3" json:"schema_version,omitempty"`
-	// Key-value compatibility attributes defined by this schema version, covering
-	// both runtime assets (e.g. "sandbox_bundle_hash") and effective guest
-	// hardware features after masking (e.g. "architecture", "cpu_features").
-	// Matched against a snapshot under the same schema_version: every attribute
-	// on the snapshot must be present on the worker with an equal value (except
-	// "cpu_features", where the snapshot's hexadecimal bitmask must be a bitwise
-	// subset of the worker's); keys only the worker has are ignored, so a worker
-	// can gain keys under one schema_version without invalidating older
-	// snapshots. Removing or recomputing a key is a new schema_version, under
-	// which older snapshots no longer match.
-	// Order as sent does not matter: ate-api-server sorts attributes by key
-	// before recording them.
+	// Compatibility attributes defined by `schema_version`, covering both runtime
+	// assets (such as `sandbox_bundle_hash`) and effective guest hardware
+	// features (such as `architecture` and `cpu_features`).
+	//
+	// For a snapshot to warm restore on a Worker under the same `schema_version`,
+	// every attribute on the snapshot must be present on the Worker with an equal
+	// value (except `cpu_features`, where the snapshot's hexadecimal bitmask must
+	// be a bitwise subset of the Worker's). Extra keys present only on the Worker
+	// are ignored.
 	//
 	// +k8s:required
 	// +k8s:maxItems=32
@@ -7865,15 +8242,16 @@ func (x *VersionedSandboxCompat) GetAttributes() []*AttributeEntry {
 	return nil
 }
 
-// AttributeEntry is a single key-value compatibility attribute.
+// AttributeEntry is a single sandbox compatibility attribute.
 type AttributeEntry struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Attribute name (e.g. "architecture", "cpu_features", "sandbox_bundle_hash").
+	// Attribute name (for example, `architecture`, `cpu_features`, or
+	// `sandbox_bundle_hash`).
 	//
 	// +k8s:required
 	// +k8s:maxLength=128
 	Key string `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"`
-	// Attribute value corresponding to key.
+	// Attribute value corresponding to `key`.
 	//
 	// +k8s:required
 	// +k8s:maxLength=256
@@ -7926,26 +8304,28 @@ func (x *AttributeEntry) GetValue() string {
 	return ""
 }
 
-// WorkerResources represents a set of resources.
+// WorkerResources specifies CPU, memory, and actor count quantities on a
+// Worker.
 type WorkerResources struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// cpu_millicores is CPU in millicores (1000 = one core). Compared against
-	// the Actor's resource limits for placement.
+	// CPU in millicores (`1000` equals one core), compared against
+	// `ActorTemplate.resources.limits.cpu_millicores` during placement.
 	//
 	// +k8s:optional
 	// +k8s:minimum=0
 	// +k8s:maximum=999999 # less than 1000 cores
 	CpuMillicores int64 `protobuf:"varint,1,opt,name=cpu_millicores,json=cpuMillicores,proto3" json:"cpu_millicores,omitempty"`
-	// memory_bytes is memory in bytes. Compared against the Actor's resource
-	// limits for placement.
+	// Memory in bytes, compared against
+	// `ActorTemplate.resources.limits.memory_bytes` plus the runtime's
+	// `actor_overhead` during placement.
 	//
 	// +k8s:optional
 	// +k8s:minimum=0
 	MemoryBytes int64 `protobuf:"varint,2,opt,name=memory_bytes,json=memoryBytes,proto3" json:"memory_bytes,omitempty"`
-	// A count of Actors.  Workers can use this to limit the number of Actors
-	// that can be placed on them, constraining the costs of other things that
-	// are not captured in the resources above, but which still have costs -
-	// netns, mounts, file descriptors, etc.
+	// Number of Actors on the Worker.
+	//
+	// The scheduler skips the Worker once `allocated.actors >= capacity.actors`,
+	// and a Worker with `0` `actors` capacity never takes an Actor.
 	//
 	// +k8s:optional
 	// +k8s:minimum=1
@@ -8005,29 +8385,30 @@ func (x *WorkerResources) GetActors() int32 {
 	return 0
 }
 
-// ActorAssignment binds an Actor to a Worker.  This is a subresource of the
-// Worker.
+// ActorAssignment is a subresource of a Worker recording one Actor currently
+// assigned to that Worker.
 type ActorAssignment struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Metadata about the assignment.
+	// Standard resource metadata.
 	//
-	// The atespace field is always empty, since it corresponds to a Worker, and
-	// Workers are not atespaced. The name field is the Actor's UID, so the Actor
-	// that caused an assignment is what addresses it.
+	// `atespace` is empty and `name` is the assigned Actor's `metadata.uid`. All
+	// fields are managed by the server.
 	//
 	// +k8s:required
 	// +k8s:beta(since: "0.0")=+k8s:subfield(atespace)=+k8s:forbidden # TODO: get rid of beta prefix
 	Metadata *ResourceMetadata `protobuf:"bytes,1,opt,name=metadata,proto3" json:"metadata,omitempty"`
-	// actor is the Actor that is assigned to the Worker.
+	// Reference to the Actor assigned to the Worker.
 	//
 	// +k8s:required
 	// +k8s:subfield(atespace)=+k8s:required
 	Actor *ObjectRef `protobuf:"bytes,2,opt,name=actor,proto3" json:"actor,omitempty"`
+	// UID of the assigned Actor incarnation at the time of placement.
+	//
 	// +k8s:required
 	// +k8s:format=k8s-uuid
 	ActorUid string `protobuf:"bytes,3,opt,name=actor_uid,json=actorUid,proto3" json:"actor_uid,omitempty"`
-	// The resources allocated to the Actor when it was assigned: its limits,
-	// plus the actor_overhead of the runtime it runs under on the Worker.
+	// Compute resources reserved on the Worker for this Actor: its template
+	// limits plus the `actor_overhead` of the runtime it runs under.
 	//
 	// +k8s:optional
 	Resources     *Resources `protobuf:"bytes,4,opt,name=resources,proto3" json:"resources,omitempty"`
@@ -8093,10 +8474,11 @@ func (x *ActorAssignment) GetResources() *Resources {
 	return nil
 }
 
+// AcquireWorkerEpochRequest is the request message for AcquireWorkerEpoch.
 type AcquireWorkerEpochRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// The Worker whose worker process is starting. atespace is always empty;
-	// Workers are global-scoped.
+	// Reference to the Worker whose process is starting (`atespace` must be
+	// empty).
 	//
 	// +k8s:required
 	// +k8s:beta(since: "0.0")=+k8s:subfield(atespace)=+k8s:forbidden # TODO: get rid of beta prefix
@@ -8142,9 +8524,11 @@ func (x *AcquireWorkerEpochRequest) GetWorker() *ObjectRef {
 	return nil
 }
 
+// AcquireWorkerEpochResponse is the response message for AcquireWorkerEpoch.
 type AcquireWorkerEpochResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// The epoch handed out, for the worker process to register with.
+	// Newly allocated epoch number for the Worker process to pass to
+	// RegisterWorker.
 	Epoch         int64 `protobuf:"varint,1,opt,name=epoch,proto3" json:"epoch,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -8187,30 +8571,29 @@ func (x *AcquireWorkerEpochResponse) GetEpoch() int64 {
 	return 0
 }
 
+// RegisterWorkerRequest is the request message for RegisterWorker.
 type RegisterWorkerRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// The Worker being registered. atespace is always empty; Workers are
-	// global-scoped.
+	// Reference to the Worker being registered (`atespace` must be empty).
 	//
 	// +k8s:required
 	// +k8s:beta(since: "0.0")=+k8s:subfield(atespace)=+k8s:forbidden # TODO: get rid of beta prefix
 	Worker *ObjectRef `protobuf:"bytes,1,opt,name=worker,proto3" json:"worker,omitempty"`
-	// The epoch the worker process acquired through AcquireWorkerEpoch.
+	// Epoch number acquired by the Worker process from AcquireWorkerEpoch.
 	//
 	// +k8s:required
 	// +k8s:minimum=1
 	Epoch int64 `protobuf:"varint,3,opt,name=epoch,proto3" json:"epoch,omitempty"`
-	// The worker pod's IPs, at most one per IP family, in the order Kubernetes
-	// reports them. They replace what is recorded.
+	// IP addresses of the Worker (at most one per IP family, in the order
+	// Kubernetes reports them), replacing the previously recorded IPs.
 	//
 	// +k8s:required
 	// +k8s:maxItems=2
 	// +k8s:listType=atomic
 	// +k8s:customValidation # until `format=k8s-ip` is supported
 	Ips []string `protobuf:"bytes,4,rep,name=ips,proto3" json:"ips,omitempty"`
-	// Everything the Worker can hold. This replaces what is recorded rather than
-	// merging into it: a dimension left out is one the Worker no longer supplies,
-	// and an Actor asking for that dimension will not be placed here.
+	// Total resource capacity of the Worker, replacing the previously recorded
+	// capacity.
 	//
 	// +k8s:required
 	Capacity      *WorkerResources `protobuf:"bytes,2,opt,name=capacity,proto3" json:"capacity,omitempty"`
@@ -8276,9 +8659,10 @@ func (x *RegisterWorkerRequest) GetCapacity() *WorkerResources {
 	return nil
 }
 
+// RegisterWorkerResponse is the response message for RegisterWorker.
 type RegisterWorkerResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// The Worker as recorded, so a caller sees what its report resolved to.
+	// Updated Worker record after registration.
 	Worker        *Worker `protobuf:"bytes,1,opt,name=worker,proto3" json:"worker,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -8321,23 +8705,28 @@ func (x *RegisterWorkerResponse) GetWorker() *Worker {
 	return nil
 }
 
+// SetWorkerSandboxRuntimesRequest is the request message for
+// SetWorkerSandboxRuntimes.
 type SetWorkerSandboxRuntimesRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// The Worker whose runtimes these are. atespace is always empty; Workers are
-	// global-scoped.
+	// Reference to the Worker reporting its sandbox runtimes (`atespace` must be
+	// empty).
 	//
 	// +k8s:required
 	// +k8s:beta(since: "0.0")=+k8s:subfield(atespace)=+k8s:forbidden # TODO: get rid of beta prefix
 	Worker *ObjectRef `protobuf:"bytes,1,opt,name=worker,proto3" json:"worker,omitempty"`
-	// The epoch the worker process registered with.
+	// Epoch number that the Worker process registered with via RegisterWorker.
 	//
 	// +k8s:required
 	// +k8s:minimum=1
 	Epoch int64 `protobuf:"varint,2,opt,name=epoch,proto3" json:"epoch,omitempty"`
-	// The sandbox classes this worker process runs and the runtimes it runs them
-	// under. The first report of a worker process fixes the Worker's sandbox
-	// class; later reports replace the runtimes, but an entry of another class is
-	// refused. This replaces what is recorded on the Worker.
+	// Sandbox classes and runtime versions supported by the Worker process,
+	// replacing `Worker.status.sandbox_classes`.
+	//
+	// The first report for a given `epoch` fixes the Worker's `sandbox_class`.
+	// Subsequent reports under the same epoch may update the runtime versions for
+	// that class, and reports with a different `sandbox_class` are rejected with
+	// `FAILED_PRECONDITION`.
 	//
 	// +k8s:required
 	// +k8s:minItems=1
@@ -8400,9 +8789,11 @@ func (x *SetWorkerSandboxRuntimesRequest) GetSandboxClasses() []*WorkerSandboxCl
 	return nil
 }
 
+// SetWorkerSandboxRuntimesResponse is the response message for
+// SetWorkerSandboxRuntimes.
 type SetWorkerSandboxRuntimesResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// The Worker as recorded.
+	// Updated Worker record.
 	Worker        *Worker `protobuf:"bytes,1,opt,name=worker,proto3" json:"worker,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -8445,33 +8836,34 @@ func (x *SetWorkerSandboxRuntimesResponse) GetWorker() *Worker {
 	return nil
 }
 
-// Request message for MintWorkerActorCertificate.
+// MintWorkerActorCertificateRequest is the request message for
+// MintWorkerActorCertificate.
 type MintWorkerActorCertificateRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// The actor for which the certificate should be issued.
-	//
-	// Must be a valid actor that currently exists according to the actor store.
+	// Actor on whose behalf the certificate is requested. Must currently be
+	// assigned to `worker`.
 	//
 	// +k8s:required
 	// +k8s:subfield(atespace)=+k8s:required
 	Actor *ObjectRef `protobuf:"bytes,1,opt,name=actor,proto3" json:"actor,omitempty"`
-	// The UID of the actor --- used to guard against deletion and recreation of
-	// an actor with the same name.
+	// Expected `metadata.uid` of the Actor, guarding against issuing a
+	// certificate for a recreated Actor with the same name.
 	//
 	// +k8s:required
 	// +k8s:format=k8s-uuid
 	ActorUid string `protobuf:"bytes,2,opt,name=actor_uid,json=actorUid,proto3" json:"actor_uid,omitempty"`
-	// Request contains DER encoded bytes of a x509 certificate signing request.
-	// The signer will ignore the contents of the CSR except to extract the
-	// subject public key.
+	// DER encoded PKCS#10 X.509 certificate signing request (CSR).
+	//
+	// The CSR must be valid DER with a valid self-signature (`INVALID_ARGUMENT`
+	// otherwise). Only the subject public key is extracted from the CSR, and
+	// certificate identity fields are constructed by the signer.
 	//
 	// +k8s:required
 	// +k8s:maxBytes=16384
 	CertificateSigningRequest []byte `protobuf:"bytes,3,opt,name=certificate_signing_request,json=certificateSigningRequest,proto3" json:"certificate_signing_request,omitempty"`
-	// The Worker requesting the certificate. atespace is always empty; Workers
-	// are global-scoped. atelet fills this in from its caller's certificate, so
-	// it names the Worker that certificate proves the request came from. It
-	// must be the Worker that the actor is assigned to.
+	// Reference to the Worker requesting the certificate (`atespace` must be
+	// empty). Populated by `atelet` from its caller's verified identity, and must
+	// match the Actor's assigned Worker.
 	//
 	// +k8s:required
 	// +k8s:beta(since: "0.0")=+k8s:subfield(atespace)=+k8s:forbidden # TODO: get rid of beta prefix
@@ -8538,12 +8930,13 @@ func (x *MintWorkerActorCertificateRequest) GetWorker() *ObjectRef {
 	return nil
 }
 
-// Response message for MintWorkerActorCertificate.
+// MintWorkerActorCertificateResponse is the response message for
+// MintWorkerActorCertificate.
 type MintWorkerActorCertificateResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Response contains a list of DER encoded certificates. The first entry is the
-	// leaf certificate, and any remaining entries are intermediates in
-	// leaf-to-root order.
+	// Certificate chain in DER encoded X.509 format, starting with the leaf
+	// certificate followed by any intermediate CA certificates in leaf to root
+	// order.
 	ActorCertificates [][]byte `protobuf:"bytes,1,rep,name=actor_certificates,json=actorCertificates,proto3" json:"actor_certificates,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
@@ -8586,24 +8979,22 @@ func (x *MintWorkerActorCertificateResponse) GetActorCertificates() [][]byte {
 	return nil
 }
 
-// Request message for MintWorkerActorJwt.
+// MintWorkerActorJwtRequest is the request message for MintWorkerActorJwt.
 type MintWorkerActorJwtRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// The actor for which the JWT should be issued.
-	//
-	// Must be a valid actor that currently exists according to the actor store.
+	// Actor on whose behalf the JWT is requested.
 	//
 	// +k8s:required
 	// +k8s:subfield(atespace)=+k8s:required
 	Actor *ObjectRef `protobuf:"bytes,1,opt,name=actor,proto3" json:"actor,omitempty"`
-	// The UID of the actor --- used to guard against deletion and recreation of
-	// an actor with the same name.
+	// Expected `metadata.uid` of the Actor, guarding against issuing a token for
+	// a recreated Actor with the same name.
 	//
 	// +k8s:required
 	// +k8s:format=k8s-uuid
 	ActorUid string `protobuf:"bytes,2,opt,name=actor_uid,json=actorUid,proto3" json:"actor_uid,omitempty"`
-	// The audiences the minted JWT is bound to. Tokens are only issued with
-	// audience bindings, so at least one is required.
+	// Audience strings placed in the minted JWT's `aud` claim. At least one
+	// audience is required.
 	//
 	// +k8s:required
 	// +k8s:maxItems=16 # guardrail; tokens realistically bind a handful of audiences
@@ -8666,23 +9057,21 @@ func (x *MintWorkerActorJwtRequest) GetAudiences() []string {
 	return nil
 }
 
-// Response message for MintWorkerActorJwt.
+// MintWorkerActorJwtResponse is the response message for MintWorkerActorJwt.
 type MintWorkerActorJwtResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// The signed JWT. Its claims are those described on
-	// MintActorJwtResponse.actor_jwt, except that it speaks for a worker
-	// acting on behalf of the actor rather than for the actor itself:
+	// Signed OIDC JWT asserting that the Worker on the Actor's node is acting on
+	// behalf of the Actor.
 	//
-	// * sub: `worker-for-actor/<atespace>/<name>`.
-	// * `worker-for-actor.ate.dev`: A JSON object with the actor's `atespace`,
-	//   `actorName`, and `actorUID`, and the `node` the token was minted for,
-	//   the one hosting the actor at that moment. A relying party refuses the
-	//   token once the actor has left that node.
+	// Carries the same standard claims as `MintActorJwtResponse.actor_jwt`, with
+	// two differences so relying parties can distinguish worker requests on
+	// behalf of an actor from direct actor requests:
 	//
-	// A relying party that trusts actor JWTs must not accept this token as the
-	// actor, and vice versa.
+	// * `sub`: `worker-for-actor/<atespace>/<name>`.
+	// * `worker-for-actor.ate.dev`: JSON object containing `atespace`,
+	//   `actorName`, `actorUID`, and the hosting `node`.
 	ActorJwt string `protobuf:"bytes,1,opt,name=actor_jwt,json=actorJwt,proto3" json:"actor_jwt,omitempty"`
-	// expire_time is when actor_jwt expires. Equal to its exp claim.
+	// Expiration timestamp of `actor_jwt`, matching its `exp` claim.
 	ExpireTime    *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=expire_time,json=expireTime,proto3" json:"expire_time,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -8732,27 +9121,24 @@ func (x *MintWorkerActorJwtResponse) GetExpireTime() *timestamppb.Timestamp {
 	return nil
 }
 
-// TODO: add a durability mode, carried through atelet's
-// RequestActorSuspendRequest, so the Worker can choose how the snapshot is
-// made durable. Until then the suspend uses SuspendActor's default mode.
+// RequestActorSuspendRequest is the request message for RequestActorSuspend.
+//
+// (-- TODO: add a durability mode, carried through atelet's RequestActorSuspendRequest, so the Worker can choose how the snapshot is made durable. Until then the suspend uses SuspendActor's default mode. --)
 type RequestActorSuspendRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// The Worker making the request. atespace is always empty; Workers are
-	// global-scoped. atelet fills this in from its caller's certificate, so it
-	// names the Worker that certificate proves the request came from.
+	// Reference to the hosting Worker requesting the suspend (`atespace` must be
+	// empty).
 	//
 	// +k8s:required
 	// +k8s:beta(since: "0.0")=+k8s:subfield(atespace)=+k8s:forbidden # TODO: get rid of beta prefix
 	Worker *ObjectRef `protobuf:"bytes,1,opt,name=worker,proto3" json:"worker,omitempty"`
-	// The Actor to suspend. It must be assigned to worker; a Worker may speak
-	// only for what it hosts.
+	// Reference to the Actor to suspend. Must currently be assigned to `worker`.
 	//
 	// +k8s:required
 	// +k8s:subfield(atespace)=+k8s:required
 	Actor *ObjectRef `protobuf:"bytes,2,opt,name=actor,proto3" json:"actor,omitempty"`
-	// The UID of the Actor the Worker believes it is hosting, which pins the
-	// request to one incarnation. Without it a request could outlive the Actor
-	// it was made about and suspend the recreation that took its name.
+	// Expected `metadata.uid` of the Actor, checked before starting the suspend
+	// (`NOT_FOUND` on mismatch).
 	//
 	// +k8s:required
 	// +k8s:format=k8s-uuid
@@ -8812,9 +9198,10 @@ func (x *RequestActorSuspendRequest) GetActorUid() string {
 	return ""
 }
 
+// RequestActorSuspendResponse is the response message for RequestActorSuspend.
 type RequestActorSuspendResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// The Actor as the suspend workflow left it.
+	// Actor state after the suspend completes.
 	Actor         *Actor `protobuf:"bytes,1,opt,name=actor,proto3" json:"actor,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -8857,26 +9244,27 @@ func (x *RequestActorSuspendResponse) GetActor() *Actor {
 	return nil
 }
 
+// ReportActorCrashedRequest is the request message for ReportActorCrashed.
 type ReportActorCrashedRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// The Worker making the report. atespace is always empty; Workers are
-	// global-scoped. atelet fills this in from its caller's certificate.
+	// Reference to the hosting Worker reporting the crash (`atespace` must be
+	// empty).
 	//
 	// +k8s:required
 	// +k8s:beta(since: "0.0")=+k8s:subfield(atespace)=+k8s:forbidden # TODO: get rid of beta prefix
 	Worker *ObjectRef `protobuf:"bytes,1,opt,name=worker,proto3" json:"worker,omitempty"`
-	// The Actor whose sandbox died. It must be assigned to worker.
+	// Reference to the Actor whose sandbox exited. Must currently be assigned to
+	// `worker`.
 	//
 	// +k8s:required
 	// +k8s:subfield(atespace)=+k8s:required
 	Actor *ObjectRef `protobuf:"bytes,2,opt,name=actor,proto3" json:"actor,omitempty"`
-	// The UID of the Actor the Worker believes it is hosting, as for
-	// RequestActorSuspend.
+	// Expected `metadata.uid` of the Actor.
 	//
 	// +k8s:required
 	// +k8s:format=k8s-uuid
 	ActorUid string `protobuf:"bytes,3,opt,name=actor_uid,json=actorUid,proto3" json:"actor_uid,omitempty"`
-	// What the Worker saw, recorded in the Actor's crash message.
+	// Diagnostic crash description recorded in `Actor.status.crash.message`.
 	//
 	// +k8s:required
 	// +k8s:maxLength=4096
@@ -8943,9 +9331,10 @@ func (x *ReportActorCrashedRequest) GetMessage() string {
 	return ""
 }
 
+// ReportActorCrashedResponse is the response message for ReportActorCrashed.
 type ReportActorCrashedResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// The Actor as the report left it.
+	// Actor state after recording the crash, in `CRASHED` state.
 	Actor         *Actor `protobuf:"bytes,1,opt,name=actor,proto3" json:"actor,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -8988,19 +9377,23 @@ func (x *ReportActorCrashedResponse) GetActor() *Actor {
 	return nil
 }
 
+// ReportActorSnapshotStateRequest is the request message for
+// ReportActorSnapshotState.
 type ReportActorSnapshotStateRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// The Actor the report is about.
+	// Reference to the Actor whose snapshot state is being reported.
 	//
 	// +k8s:required
 	// +k8s:subfield(atespace)=+k8s:required
 	Actor *ObjectRef `protobuf:"bytes,1,opt,name=actor,proto3" json:"actor,omitempty"`
-	// The UID of the Actor atelet holds snapshots for, which pins the report to
-	// one incarnation, as on RequestActorSuspendRequest.
+	// Expected `metadata.uid` of the Actor incarnation for which `atelet` holds
+	// snapshots.
 	//
 	// +k8s:required
 	// +k8s:format=k8s-uuid
 	ActorUid string `protobuf:"bytes,2,opt,name=actor_uid,json=actorUid,proto3" json:"actor_uid,omitempty"`
+	// Current local and durable snapshot state observed by `atelet` on its node.
+	//
 	// +k8s:required
 	State         *ActorSnapshotState `protobuf:"bytes,3,opt,name=state,proto3" json:"state,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -9058,6 +9451,8 @@ func (x *ReportActorSnapshotStateRequest) GetState() *ActorSnapshotState {
 	return nil
 }
 
+// ReportActorSnapshotStateResponse is the response message for
+// ReportActorSnapshotState.
 type ReportActorSnapshotStateResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -9094,28 +9489,33 @@ func (*ReportActorSnapshotStateResponse) Descriptor() ([]byte, []int) {
 	return file_api_ateapi_v1_ateapi_proto_rawDescGZIP(), []int{126}
 }
 
-// ActorSnapshotState is what atelet holds for one Actor on its node. It
-// mirrors atelet's ActorSnapshotState, flattened: atelet's SnapshotReport
-// nests its own Snapshot message, which this API's Snapshot is not.
+// ActorSnapshotState describes the local and durable snapshots `atelet`
+// currently observes for an Actor on its node.
+//
+// A report with neither `latest_local` nor `uploading` detaches the Actor from
+// the node and must set `latest_durable` (`INVALID_ARGUMENT` otherwise).
 type ActorSnapshotState struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// The snapshot atelet restores the Actor from locally. Unset once a detach
-	// has made the snapshot durable and begun deleting it; latest_durable is
-	// then the Actor's latest snapshot.
+	// Newest snapshot present on local node disk from which `atelet` can restore
+	// the Actor locally.
+	//
+	// Unset when a synchronous suspend kept no local copy, or once `atelet`
+	// detaches the Actor from the node after uploading the snapshot to object
+	// storage.
 	//
 	// +k8s:optional
 	LatestLocal *SnapshotReport `protobuf:"bytes,1,opt,name=latest_local,json=latestLocal,proto3" json:"latest_local,omitempty"`
-	// The snapshot an in-flight upload is reading, if any.
+	// Snapshot currently being uploaded to object storage by `atelet`, if any.
 	//
 	// +k8s:optional
 	Uploading *SnapshotReport `protobuf:"bytes,2,opt,name=uploading,proto3" json:"uploading,omitempty"`
-	// The newest snapshot atelet knows is durable, whether or not the control
-	// plane has recorded it. Unset says nothing about older durable snapshots.
+	// Newest snapshot that `atelet` has confirmed is completely uploaded to
+	// durable object storage.
 	//
 	// +k8s:optional
 	LatestDurable *SnapshotReport `protobuf:"bytes,3,opt,name=latest_durable,json=latestDurable,proto3" json:"latest_durable,omitempty"`
-	// When atelet next plans to upload latest_local. Advisory: a promote or
-	// detach can upload it sooner.
+	// Advisory timestamp when `atelet` plans to start or retry uploading
+	// `uploading` (when a retry is pending) or `latest_local` to object storage.
 	//
 	// +k8s:optional
 	UploadDueTime *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=upload_due_time,json=uploadDueTime,proto3" json:"upload_due_time,omitempty"`
@@ -9181,38 +9581,38 @@ func (x *ActorSnapshotState) GetUploadDueTime() *timestamppb.Timestamp {
 	return nil
 }
 
-// SnapshotReport is one of an Actor's snapshots, named by the uuid and
-// generation the control plane gave it.
+// SnapshotReport describes a single Actor snapshot generation reported by
+// `atelet`.
 type SnapshotReport struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Snapshot.uuid.
+	// Unique snapshot identifier matching `Snapshot.uuid`.
 	//
 	// +k8s:required
 	// +k8s:format=k8s-short-name
 	Uuid string `protobuf:"bytes,1,opt,name=uuid,proto3" json:"uuid,omitempty"`
-	// Snapshot.generation.
+	// Snapshot generation number matching `Snapshot.generation`.
 	//
 	// +k8s:required
 	// +k8s:minimum=1
 	Generation int32 `protobuf:"varint,2,opt,name=generation,proto3" json:"generation,omitempty"`
-	// The fidelity the snapshot holds, read from its manifest.
+	// State fidelity captured in the snapshot.
 	//
 	// +k8s:required
 	// +k8s:minimum=1
 	// +k8s:maximum=3 # keep this in sync with the SnapshotFidelity enum
 	Fidelity SnapshotFidelity `protobuf:"varint,3,opt,name=fidelity,proto3,enum=substrate.ateapi.v1.SnapshotFidelity" json:"fidelity,omitempty"`
-	// Where the snapshot's durable copy is, or will be, uploaded.
+	// Object storage destination where the snapshot is or will be uploaded.
 	//
 	// +k8s:required
 	Object *ObjectSnapshot `protobuf:"bytes,4,opt,name=object,proto3" json:"object,omitempty"`
-	// When the checkpoint that produced the snapshot committed on the node.
-	// Unset when this atelet did not take it, as for a snapshot it restored
-	// from object storage.
+	// Timestamp when the checkpoint producing this snapshot committed to local
+	// node disk. Unset when `atelet` has no recorded commit time for the
+	// snapshot.
 	//
 	// +k8s:optional
 	LocalCommitTime *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=local_commit_time,json=localCommitTime,proto3" json:"local_commit_time,omitempty"`
-	// When the snapshot's manifest was written to object storage. Set only in
-	// latest_durable, and only when this atelet wrote it.
+	// Timestamp when the snapshot manifest finished uploading to object storage.
+	// Set only on `latest_durable` when uploaded by this `atelet`.
 	//
 	// +k8s:optional
 	DurableCompleteTime *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=durable_complete_time,json=durableCompleteTime,proto3" json:"durable_complete_time,omitempty"`
@@ -9292,20 +9692,25 @@ func (x *SnapshotReport) GetDurableCompleteTime() *timestamppb.Timestamp {
 	return nil
 }
 
-// AccessPolicy is an access policy resource nested under a parent resource (or
-// the global singleton installation). Every parent resource has at most one
-// access policy resource, named "default".
+// AccessPolicy is a role based access control policy singleton nested under
+// either the global Substrate installation or an individual Atespace.
+//
+// Each parent scope has at most one AccessPolicy, named `default`. Permissions
+// are additive: a principal granted a role in the global AccessPolicy inherits
+// the corresponding access across all Atespaces, and an Atespace AccessPolicy
+// grants access within that specific Atespace.
 type AccessPolicy struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Standard resource metadata. Atespace must match the parent resource (empty
-	// for global-scoped parents like Global and Atespace) and name must be
-	// "default". Both are caller-specified on create and immutable. UID, version,
-	// create_time, and update_time are server-managed.
+	// Standard resource metadata.
+	//
+	// `atespace` must be empty and `name` must be `default`. Both are set by the
+	// caller on create and are immutable. `uid`, `version`, and timestamps are
+	// managed by the server.
 	//
 	// +k8s:required
 	// +k8s:customValidation # name must be "default"
 	Metadata *ResourceMetadata `protobuf:"bytes,1,opt,name=metadata,proto3" json:"metadata,omitempty"`
-	// Role bindings granting permissions on the parent resource.
+	// Role bindings granting permissions on the parent scope.
 	//
 	// +k8s:optional
 	// +k8s:listType=atomic
@@ -9359,19 +9764,22 @@ func (x *AccessPolicy) GetBindings() []*Binding {
 	return nil
 }
 
-// Binding associates a list of principals (members) with a single role.
+// Binding associates a set of principal identities with a role on an
+// AccessPolicy's parent scope.
 type Binding struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// The role name for the parent resource type (e.g., "owner", "editor",
-	// "viewer").
+	// Role name to grant on the parent scope: `owner` or `viewer` on the global
+	// AccessPolicy, or `owner`, `editor`, or `viewer` on an Atespace
+	// AccessPolicy. Each role may appear in at most one binding per policy.
 	//
 	// +k8s:required
 	// +k8s:maxLength=64
 	Role string `protobuf:"bytes,1,opt,name=role,proto3" json:"role,omitempty"`
-	// Principal identities granted this role.
-	// Examples:
-	//   - "user:alice@example.com"
-	//   - "user:sa-ci-runner"
+	// User principal identities granted `role`, formatted as `user:<id>` (for
+	// example, `user:alice@example.com` or `user:system:serviceaccount:ns:sa`).
+	//
+	// At most `1500` members may be specified per binding and across all bindings
+	// of an AccessPolicy combined.
 	//
 	// +k8s:required
 	// +k8s:listType=set
@@ -9426,10 +9834,11 @@ func (x *Binding) GetMembers() []string {
 	return nil
 }
 
-// GetGlobalAccessPolicyRequest retrieves the deployment-wide global access policy singleton.
+// GetGlobalAccessPolicyRequest is the request message for
+// GetGlobalAccessPolicy.
 type GetGlobalAccessPolicyRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Name of the singleton access policy. Must be "default".
+	// Name of the singleton global AccessPolicy. Must be `default`.
 	//
 	// +k8s:required
 	// +k8s:format=k8s-short-name
@@ -9476,11 +9885,13 @@ func (x *GetGlobalAccessPolicyRequest) GetName() string {
 	return ""
 }
 
-// CreateGlobalAccessPolicyRequest creates the deployment-wide global access policy singleton.
+// CreateGlobalAccessPolicyRequest is the request message for
+// CreateGlobalAccessPolicy.
 type CreateGlobalAccessPolicyRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// The policy to create. metadata.name must be "default" and
-	// metadata.atespace must be empty.
+	// Global AccessPolicy to create.
+	//
+	// `metadata.name` must be `default` and `metadata.atespace` must be empty.
 	//
 	// +k8s:required
 	AccessPolicy  *AccessPolicy `protobuf:"bytes,1,opt,name=access_policy,json=accessPolicy,proto3" json:"access_policy,omitempty"`
@@ -9525,11 +9936,17 @@ func (x *CreateGlobalAccessPolicyRequest) GetAccessPolicy() *AccessPolicy {
 	return nil
 }
 
-// UpdateGlobalAccessPolicyRequest replaces the deployment-wide global access policy singleton.
+// UpdateGlobalAccessPolicyRequest is the request message for
+// UpdateGlobalAccessPolicy.
 type UpdateGlobalAccessPolicyRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Full replacement. Metadata UID and version are required preconditions;
-	// metadata.name must be "default" and metadata.atespace must be empty.
+	// Replacement global AccessPolicy.
+	//
+	// `metadata.name` must be `default` and `metadata.atespace` must be empty.
+	// `metadata.uid` and `metadata.version` are required for optimistic locking
+	// (`INVALID_ARGUMENT` if omitted): populate them from a prior
+	// GetGlobalAccessPolicy read so the server rejects the update with `ABORTED`
+	// if `uid` does not match or a concurrent update incremented `version`.
 	//
 	// +k8s:required
 	AccessPolicy  *AccessPolicy `protobuf:"bytes,1,opt,name=access_policy,json=accessPolicy,proto3" json:"access_policy,omitempty"`
@@ -9574,15 +9991,17 @@ func (x *UpdateGlobalAccessPolicyRequest) GetAccessPolicy() *AccessPolicy {
 	return nil
 }
 
-// GetAtespaceAccessPolicyRequest identifies an Atespace's access policy.
+// GetAtespaceAccessPolicyRequest is the request message for
+// GetAtespaceAccessPolicy.
 type GetAtespaceAccessPolicyRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// The parent Atespace of the access policy resource to retrieve.
+	// Parent Atespace of the AccessPolicy to retrieve (`atespace` on the
+	// ObjectRef must be empty).
 	//
 	// +k8s:required
 	// +k8s:beta(since: "0.0")=+k8s:subfield(atespace)=+k8s:forbidden # TODO: get rid of beta prefix
 	Atespace *ObjectRef `protobuf:"bytes,1,opt,name=atespace,proto3" json:"atespace,omitempty"`
-	// Name of the singleton access policy. Must be "default".
+	// Name of the singleton AccessPolicy. Must be `default`.
 	//
 	// +k8s:required
 	// +k8s:format=k8s-short-name
@@ -9636,16 +10055,19 @@ func (x *GetAtespaceAccessPolicyRequest) GetName() string {
 	return ""
 }
 
-// CreateAtespaceAccessPolicyRequest creates an access policy for an Atespace.
+// CreateAtespaceAccessPolicyRequest is the request message for
+// CreateAtespaceAccessPolicy.
 type CreateAtespaceAccessPolicyRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Parent Atespace under which to create the policy resource.
+	// Parent Atespace under which to create the AccessPolicy (`atespace` on the
+	// ObjectRef must be empty).
 	//
 	// +k8s:required
 	// +k8s:beta(since: "0.0")=+k8s:subfield(atespace)=+k8s:forbidden # TODO: get rid of beta prefix
 	Atespace *ObjectRef `protobuf:"bytes,1,opt,name=atespace,proto3" json:"atespace,omitempty"`
-	// The policy to create. metadata.name must be "default" and
-	// metadata.atespace must be empty.
+	// AccessPolicy to create.
+	//
+	// `metadata.name` must be `default` and `metadata.atespace` must be empty.
 	//
 	// +k8s:required
 	AccessPolicy  *AccessPolicy `protobuf:"bytes,2,opt,name=access_policy,json=accessPolicy,proto3" json:"access_policy,omitempty"`
@@ -9697,16 +10119,24 @@ func (x *CreateAtespaceAccessPolicyRequest) GetAccessPolicy() *AccessPolicy {
 	return nil
 }
 
-// UpdateAtespaceAccessPolicyRequest replaces an Atespace's access policy.
+// UpdateAtespaceAccessPolicyRequest is the request message for
+// UpdateAtespaceAccessPolicy.
 type UpdateAtespaceAccessPolicyRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Parent Atespace under which to update the policy resource.
+	// Parent Atespace under which to update the AccessPolicy (`atespace` on the
+	// ObjectRef must be empty).
 	//
 	// +k8s:required
 	// +k8s:beta(since: "0.0")=+k8s:subfield(atespace)=+k8s:forbidden # TODO: get rid of beta prefix
 	Atespace *ObjectRef `protobuf:"bytes,1,opt,name=atespace,proto3" json:"atespace,omitempty"`
-	// Full replacement. Metadata UID and version are required preconditions;
-	// metadata.name must be "default" and metadata.atespace must be empty.
+	// Replacement AccessPolicy.
+	//
+	// `metadata.name` must be `default` and `metadata.atespace` must be empty.
+	// `metadata.uid` and `metadata.version` are required for optimistic locking
+	// (`INVALID_ARGUMENT` if omitted): populate them from a prior
+	// GetAtespaceAccessPolicy read so the server rejects the update with
+	// `ABORTED` if `uid` does not match or a concurrent update incremented
+	// `version`.
 	//
 	// +k8s:required
 	AccessPolicy  *AccessPolicy `protobuf:"bytes,2,opt,name=access_policy,json=accessPolicy,proto3" json:"access_policy,omitempty"`
@@ -9758,21 +10188,23 @@ func (x *UpdateAtespaceAccessPolicyRequest) GetAccessPolicy() *AccessPolicy {
 	return nil
 }
 
-// DeleteAtespaceAccessPolicyRequest identifies an Atespace's access policy.
+// DeleteAtespaceAccessPolicyRequest is the request message for
+// DeleteAtespaceAccessPolicy.
 type DeleteAtespaceAccessPolicyRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// The parent Atespace of the access policy resource to delete.
+	// Parent Atespace of the AccessPolicy to delete (`atespace` on the ObjectRef
+	// must be empty).
 	//
 	// +k8s:required
 	// +k8s:beta(since: "0.0")=+k8s:subfield(atespace)=+k8s:forbidden # TODO: get rid of beta prefix
 	Atespace *ObjectRef `protobuf:"bytes,1,opt,name=atespace,proto3" json:"atespace,omitempty"`
-	// Name of the singleton access policy. Must be "default".
+	// Name of the singleton AccessPolicy. Must be `default`.
 	//
 	// +k8s:required
 	// +k8s:format=k8s-short-name
 	// +k8s:customValidation # must be "default"
 	Name string `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
-	// Optional per-delete preconditions.
+	// Optional preconditions for the delete operation.
 	//
 	// +k8s:optional
 	Options       *DeleteOptions `protobuf:"bytes,3,opt,name=options,proto3" json:"options,omitempty"`
@@ -9831,21 +10263,20 @@ func (x *DeleteAtespaceAccessPolicyRequest) GetOptions() *DeleteOptions {
 	return nil
 }
 
-// ResourceAnnotation marks a message as an API resource. See
-// docs/resource-model.md.
+// ResourceAnnotation marks a protobuf message as a Substrate API resource.
 type ResourceAnnotation struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// The resource types this resource is a subresource of: another resource's
-	// message name, or "Global" for the whole Substrate installation. Empty for
-	// a top-level resource.
+	// Parent resource message names that this resource is nested under, or
+	// `Global` for the whole installation. Empty for top level resources.
 	Parents []string `protobuf:"bytes,1,rep,name=parents,proto3" json:"parents,omitempty"`
-	// Whether each parent has at most one instance of this resource.
+	// Whether each parent scope has at most one instance of this resource (named
+	// `default`).
 	Singleton bool `protobuf:"varint,2,opt,name=singleton,proto3" json:"singleton,omitempty"`
-	// Whether a top-level resource belongs to an atespace. Set only on a
-	// top-level resource: a subresource has its parent's scope.
+	// Scope of a top level resource (`ATESPACE` or `GLOBAL`). Left unset on
+	// subresources, which inherit their parent's scope.
 	Scope Scope `protobuf:"varint,3,opt,name=scope,proto3,enum=substrate.ateapi.v1.Scope" json:"scope,omitempty"`
-	// The resource's plural name, as List methods and their response fields
-	// use it. For example, "AccessPolicies" for AccessPolicy.
+	// Plural name of the resource used by List methods and collection fields (for
+	// example, `Actors` for Actor and ListActors).
 	Plural        string `protobuf:"bytes,4,opt,name=plural,proto3" json:"plural,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -9909,11 +10340,12 @@ func (x *ResourceAnnotation) GetPlural() string {
 	return ""
 }
 
-// MethodAnnotation describes an RPC of the API.
+// MethodAnnotation associates an RPC method with the API resource type it
+// operates on.
 type MethodAnnotation struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// The message name of the resource the method operates on. For example,
-	// "Actor" for SuspendActor, or "EgressPolicy" for GetActorEgressPolicy.
+	// Message name of the primary resource the RPC operates on (for example,
+	// `Actor` for SuspendActor, or `EgressPolicy` for GetActorEgressPolicy).
 	Resource      string `protobuf:"bytes,1,opt,name=resource,proto3" json:"resource,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -9977,12 +10409,16 @@ var file_api_ateapi_v1_ateapi_proto_extTypes = []protoimpl.ExtensionInfo{
 
 // Extension fields to descriptorpb.MessageOptions.
 var (
+	// Resource metadata annotation for API resource messages.
+	//
 	// optional substrate.ateapi.v1.ResourceAnnotation resource = 50000;
 	E_Resource = &file_api_ateapi_v1_ateapi_proto_extTypes[0]
 )
 
 // Extension fields to descriptorpb.MethodOptions.
 var (
+	// Resource type annotation for API RPC methods.
+	//
 	// optional substrate.ateapi.v1.MethodAnnotation method = 50000;
 	E_Method = &file_api_ateapi_v1_ateapi_proto_extTypes[1]
 )
